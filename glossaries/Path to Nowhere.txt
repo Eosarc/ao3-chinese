@@ -162,6 +162,16 @@ Jichuan：霁川
 Ayiguo：阿依果
 Clementine：克莱门汀
 Forensica：福伦辛卡
+Murphy：墨菲
+Isomer：艾瑟默尔
+Celine：席宁
+Chengxiao：承霄
+Phanuel：法露儿
+Famorene Eirene = 荒噬·伊琳娜
+Famorene·Eirene：荒噬·伊琳娜
+Requiem：丽奎安
+Daffodil：达芙蒂尔
+Arancia：阿兰恰
 
 // 设定
 Dis City：狄斯城
