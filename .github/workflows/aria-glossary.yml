@@ -83,6 +83,57 @@ jobs:
             git push origin HEAD:${{ github.event.pull_request.head.ref }} || true
           fi
 
+      - name: 自动标准化 PR 标题
+        id: format_title
+        if: steps.get_changed.outputs.files != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const glossaryFiles = files.filter(f => f.filename.startsWith('glossaries/') && !f.filename.endsWith('.json'));
+            if (glossaryFiles.length === 0) return;
+
+            const targetFile = glossaryFiles[0];
+            const isAdded = targetFile.status === 'added';
+            const actionText = isAdded ? '新增' : '更新';
+
+            // 优先从 PR 描述中提取作品原名，其次使用文件名
+            let workName = '';
+            const prBody = pr.body || '';
+            const match = prBody.match(/作品原名[^\n]*\n+([^\n#\-]+)/i) || prBody.match(/作品原名[^\n]*[:：]\s*([^\n]+)/i);
+            if (match) {
+              const clean = match[1].trim().replace(/^\{|\}$/g, '').replace(/^`|`$/g, '').replace(/^例如[：:]\s*/, '').trim();
+              if (clean && !clean.includes('BanG Dream')) {
+                workName = clean;
+              }
+            }
+            if (!workName) {
+              const base = targetFile.filename.replace(/^glossaries\//, '').replace(/\.txt$/, '');
+              workName = base.replace(/_/g, ' ');
+            }
+
+            const standardTitle = `${actionText} ${workName} 术语表`;
+            if (pr.title !== standardTitle) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                title: standardTitle,
+              });
+              console.log(`PR 标题已由 Aria 自动标准化为: "${standardTitle}"`);
+            }
+
       - name: 运行 Aria 质检脚本
         id: aria_linter
         if: steps.get_changed.outputs.files != ''
@@ -203,10 +254,56 @@ jobs:
 
             let wikiContent = fs.readFileSync(wikiFile, "utf-8");
 
+            function cleanValue(str, exampleKeyword) {
+              if (!str) return "";
+              let res = str.trim();
+              if (res.startsWith("{") && res.endsWith("}")) {
+                res = res.slice(1, -1).trim();
+              }
+              res = res.replace(/^`|`$/g, "").trim();
+              if (res.startsWith("例如：") || res.startsWith("例如:")) {
+                res = res.replace(/^例如[：:]\s*/, "").trim();
+                if (exampleKeyword && res.includes(exampleKeyword)) return "";
+              }
+              if (exampleKeyword && res.includes(exampleKeyword)) return "";
+              return res;
+            }
+
+            function extractField(body, pattern, exampleKeyword) {
+              const lines = body.split("\n");
+              for (let i = 0; i < lines.length; i++) {
+                if (pattern.test(lines[i])) {
+                  const afterColon = lines[i].replace(/^[^:：]+[:：]/, "").trim();
+                  if (afterColon) {
+                    const val = cleanValue(afterColon, exampleKeyword);
+                    if (val) return val;
+                  }
+                  for (let j = i + 1; j < lines.length; j++) {
+                    const next = lines[j].trim();
+                    if (!next) continue;
+                    if (next.startsWith("-") || next.startsWith("#")) break;
+                    const val = cleanValue(next, exampleKeyword);
+                    if (val) return val;
+                  }
+                }
+              }
+              return "";
+            }
+
+            // 检查是否同意收录至 Wiki
+            const agreeInclusion = /\[[xX]\]\s*同意收录至\s*AO3\s*Translator/i.test(prBody);
+            if (!agreeInclusion) {
+              console.log("贡献者未勾选「同意收录至 AO3 Translator 官方在线术语库」，跳过 Wiki 写入。");
+              process.exit(0);
+            }
+
             // 提取 PR 模板字段
-            const matchName = prBody.match(/作品原名[^\n]*\n+([^\n#\-]+)/i);
-            const matchAlias = prBody.match(/译名[^\n]*\n+([^\n#\-]+)/i);
-            const matchMaint = prBody.match(/维护者信息[^\n]*\n+([^\n#\-]+)/i);
+            const prWorkName = extractField(prBody, /作品原名/, "BanG Dream");
+            const prAliases = extractField(prBody, /译名|别名|搜索标签/, "梦想协奏曲");
+            const prMaintNick = extractField(prBody, /维护者昵称/, "V-Lipset");
+            const prMaintLink = extractField(prBody, /主页链接|反馈联系方式/, "github.com/V-Lipset");
+            const prGeneralMaint = extractField(prBody, /维护者信息/, "V-Lipset");
+            const prRawUrl = extractField(prBody, /Raw\s*链接/, "raw.githubusercontent.com");
 
             // 获取本次合并的新增术语表文件
             const glossariesDir = path.resolve("glossaries");
@@ -214,12 +311,14 @@ jobs:
 
             for (const f of files) {
               const baseName = f.replace(/\.txt$/, "");
-              const rawUrl = `https://raw.githubusercontent.com/${repoFullName}/main/glossaries/${encodeURIComponent(f)}`;
+              const defaultRawUrl = `https://raw.githubusercontent.com/${repoFullName}/main/glossaries/${encodeURIComponent(f)}`;
+              const rawUrl = prRawUrl || defaultRawUrl;
               
-              // 检查 Wiki 是否已收录（通过文件名或作品原名）
+              // 检查 Wiki 是否已收录（通过文件名或作品原名或链接）
               const alreadyExists = wikiContent.includes(`/${encodeURIComponent(f)}`) || 
                                    wikiContent.includes(`/${f}`) ||
-                                   (matchName && matchName[1] && wikiContent.includes(`### ${matchName[1].trim()}`));
+                                   (prRawUrl && wikiContent.includes(prRawUrl)) ||
+                                   (prWorkName && wikiContent.includes(`### ${prWorkName}`));
 
               if (alreadyExists) {
                 console.log(`术语表 "${f}" 已在 Wiki 中收录，保持 Wiki 不动。`);
@@ -228,9 +327,16 @@ jobs:
 
               console.log(`检测到新增术语表 "${f}"，准备写入 Wiki...`);
 
-              const workTitle = (matchName && matchName[1].trim()) ? matchName[1].trim() : baseName;
-              const aliases = (matchAlias && matchAlias[1].trim()) ? matchAlias[1].trim() : "";
-              const maintainerRaw = (matchMaint && matchMaint[1].trim()) ? matchMaint[1].trim() : "社区贡献者";
+              // 读取文件内头部维护者作为兜底
+              let fileMaintainer = "";
+              try {
+                const fileText = fs.readFileSync(path.join(glossariesDir, f), "utf-8");
+                const mLine = fileText.split("\n").find(l => l.trim().startsWith("维护者"));
+                if (mLine) fileMaintainer = mLine.replace(/^维护者[:：]\s*/, "").trim();
+              } catch (e) {}
+
+              const workTitle = prWorkName || baseName.replace(/_/g, " ");
+              const aliases = prAliases || "";
               
               // 构造标准 Wiki 条目
               let newEntry = `\n### ${workTitle}\n`;
@@ -238,15 +344,22 @@ jobs:
                 newEntry += `* 译名：${aliases}\n`;
               }
               newEntry += `* 链接：[${rawUrl}](${rawUrl})\n`;
-              const maintLinkMatch = maintainerRaw.match(/\[(.*?)\]\((.*?)\)/);
-              if (maintLinkMatch) {
-                newEntry += `* 维护者：[${maintLinkMatch[1].trim()}](${maintLinkMatch[2].trim()})\n`;
-              } else if (maintainerRaw.startsWith("http")) {
-                newEntry += `* 维护者：[${maintainerRaw}](${maintainerRaw})\n`;
-              } else if (maintainerRaw.includes("@")) {
-                newEntry += `* 维护者：[${maintainerRaw}](mailto:${maintainerRaw})\n`;
+
+              // 维护者字段处理
+              if (prMaintNick && prMaintLink) {
+                newEntry += `* 维护者：[${prMaintNick}](${prMaintLink})\n`;
               } else {
-                newEntry += `* 维护者：[${maintainerRaw}](https://github.com/${maintainerRaw})\n`;
+                const mRaw = prGeneralMaint || prMaintNick || prMaintLink || fileMaintainer || "社区贡献者";
+                const maintLinkMatch = mRaw.match(/\[(.*?)\]\((.*?)\)/);
+                if (maintLinkMatch) {
+                  newEntry += `* 维护者：[${maintLinkMatch[1].trim()}](${maintLinkMatch[2].trim()})\n`;
+                } else if (mRaw.startsWith("http")) {
+                  newEntry += `* 维护者：[${mRaw}](${mRaw})\n`;
+                } else if (mRaw.includes("@")) {
+                  newEntry += `* 维护者：[${mRaw}](mailto:${mRaw})\n`;
+                } else {
+                  newEntry += `* 维护者：[${mRaw}](https://github.com/${mRaw})\n`;
+                }
               }
 
               wikiContent += newEntry;
