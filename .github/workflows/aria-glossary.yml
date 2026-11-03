@@ -83,6 +83,57 @@ jobs:
             git push origin HEAD:${{ github.event.pull_request.head.ref }} || true
           fi
 
+      - name: 自动标准化 PR 标题
+        id: format_title
+        if: steps.get_changed.outputs.files != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const glossaryFiles = files.filter(f => f.filename.startsWith('glossaries/') && !f.filename.endsWith('.json'));
+            if (glossaryFiles.length === 0) return;
+
+            const targetFile = glossaryFiles[0];
+            const isAdded = targetFile.status === 'added';
+            const actionText = isAdded ? '新增' : '更新';
+
+            // 优先从 PR 描述中提取作品原名，其次使用文件名
+            let workName = '';
+            const prBody = pr.body || '';
+            const match = prBody.match(/作品原名[^\n]*\n+([^\n#\-]+)/i) || prBody.match(/作品原名[^\n]*[:：]\s*([^\n]+)/i);
+            if (match) {
+              const clean = match[1].trim().replace(/^\{|\}$/g, '').replace(/^`|`$/g, '').replace(/^例如[：:]\s*/, '').trim();
+              if (clean && !clean.includes('BanG Dream')) {
+                workName = clean;
+              }
+            }
+            if (!workName) {
+              const base = targetFile.filename.replace(/^glossaries\//, '').replace(/\.txt$/, '');
+              workName = base.replace(/_/g, ' ');
+            }
+
+            const standardTitle = `${actionText} ${workName} 术语表`;
+            if (pr.title !== standardTitle) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                title: standardTitle,
+              });
+              console.log(`PR 标题已由 Aria 自动标准化为: "${standardTitle}"`);
+            }
+
       - name: 运行 Aria 质检脚本
         id: aria_linter
         if: steps.get_changed.outputs.files != ''
@@ -209,6 +260,7 @@ jobs:
               if (res.startsWith("{") && res.endsWith("}")) {
                 res = res.slice(1, -1).trim();
               }
+              res = res.replace(/^`|`$/g, "").trim();
               if (res.startsWith("例如：") || res.startsWith("例如:")) {
                 res = res.replace(/^例如[：:]\s*/, "").trim();
                 if (exampleKeyword && res.includes(exampleKeyword)) return "";

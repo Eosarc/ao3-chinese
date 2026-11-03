@@ -21,9 +21,9 @@
 - **维护者昵称**：
   {例如：V-Lipset}
 - **主页链接或反馈联系方式**：
-  {例如：https://github.com/V-Lipset}
+  {例如：`https://github.com/V-Lipset`}
 - **在线术语表文件 Raw 链接**：
-  {例如：https://raw.githubusercontent.com/V-Lipset/ao3-chinese/main/glossaries/BanG%20Dream.txt}
+  {例如：`https://raw.githubusercontent.com/V-Lipset/ao3-chinese/main/glossaries/BanG%20Dream.txt`}
 
 ---
 
