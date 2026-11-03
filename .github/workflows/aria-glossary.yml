@@ -87,6 +87,8 @@ jobs:
         id: aria_linter
         if: steps.get_changed.outputs.files != ''
         continue-on-error: true
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           cd pr_repo
           cp ../base_repo/tools/glossary-linter.mjs tools/glossary-linter.mjs

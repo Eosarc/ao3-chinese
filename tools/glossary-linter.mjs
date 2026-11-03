@@ -430,9 +430,33 @@ export function autoFixMissingTxtExtensions(dirPath) {
 }
 
 /**
+ * 检查 PR 描述表单内容（单选防呆校验）
+ */
+export function checkPrBody(body) {
+  const warnings = [];
+  if (!body) return warnings;
+
+  // PR 类型单选检查
+  const typeMatches = body.match(/\[[xX]\]\s*(?:在线术语表提交|功能改进|界面汉化|文档与其他)/g) || [];
+  if (typeMatches.length > 1) {
+    warnings.push('「Pull Request 类型」同时勾选了多个选项，建议单选其一，便于维护者快速归类。');
+  } else if (typeMatches.length === 0) {
+    warnings.push('未在 PR 描述中勾选「Pull Request 类型」，建议单选其一以明确意图。');
+  }
+
+  // 变更类型单选检查
+  const changeMatches = body.match(/\[[xX]\]\s*(?:新增在线术语表|更新已有在线术语表)/g) || [];
+  if (changeMatches.length > 1) {
+    warnings.push('「变更类型」同时勾选了“新增”与“更新”，建议单选其一。');
+  }
+
+  return warnings;
+}
+
+/**
  * 生成 Aria Markdown 审查报告
  */
-export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMain = true) {
+export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMain = true, prBodyWarnings = []) {
   let md = `## Aria 术语表自动审查报告\n\n`;
 
   if (autoFixedList.length > 0) {
@@ -444,8 +468,16 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     md += `\n`;
   }
 
+  if (prBodyWarnings.length > 0) {
+    md += `### PR 描述表单核对\n\n`;
+    for (const pw of prBodyWarnings) {
+      md += `- **提示**：${pw}\n`;
+    }
+    md += `\n`;
+  }
+
   let totalErrors = 0;
-  let totalWarnings = 0;
+  let totalWarnings = prBodyWarnings.length;
 
   for (const report of reports) {
     totalErrors += report.errors.length;
@@ -527,7 +559,10 @@ if (isMainModule) {
     }
   }
 
-  const { markdown, totalErrors } = formatMarkdownReport(reports, autoFixed, headBranch === 'main');
+  const prBody = process.env.PR_BODY || '';
+  const prBodyWarnings = checkPrBody(prBody);
+
+  const { markdown, totalErrors } = formatMarkdownReport(reports, autoFixed, headBranch === 'main', prBodyWarnings);
   console.log(markdown);
 
   if (totalErrors > 0) {
