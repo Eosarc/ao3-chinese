@@ -37,26 +37,33 @@ jobs:
         with:
           node-version: 20
 
-      - name: 获取 PR 变动的文件列表
+      - name: 获取 PR 变动的术语表文件列表
         id: get_changed
-        run: |
-          cd pr_repo
-          BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
-          git fetch origin "$BASE_REF" --depth=1
-          CHANGED=$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'glossaries/**' | tr '\n' ' ')
-          echo "CHANGED_FILES=$CHANGED" >> $GITHUB_ENV
-          echo "PR 变动文件: $CHANGED"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            const glossaryFiles = files
+              .map(f => f.filename)
+              .filter(f => f.startsWith('glossaries/') && !f.endsWith('.json'));
+            core.setOutput('files', glossaryFiles.join(' '));
+            console.log('PR 变动术语表文件:', glossaryFiles);
 
       - name: 自动修复缺失的 .txt 后缀（仅针对本次变动文件）
         id: auto_fix
+        if: steps.get_changed.outputs.files != ''
         run: |
           cd pr_repo
           node -e '
             import fs from "node:fs";
             import path from "node:path";
-            const changed = (process.env.CHANGED_FILES || "").trim().split(/\s+/).filter(Boolean);
+            const files = "${{ steps.get_changed.outputs.files }}".trim().split(/\s+/).filter(Boolean);
             let fixed = [];
-            for (const f of changed) {
+            for (const f of files) {
               if (f.startsWith(".") || f.endsWith(".json") || f.endsWith(".txt")) continue;
               if (fs.existsSync(f) && fs.statSync(f).isFile()) {
                 fs.renameSync(f, f + ".txt");
@@ -79,16 +86,25 @@ jobs:
 
       - name: 运行 Aria 质检脚本
         id: aria_linter
+        if: steps.get_changed.outputs.files != ''
         continue-on-error: true
         run: |
           cd pr_repo
           cp ../base_repo/tools/glossary-linter.mjs tools/glossary-linter.mjs
-          BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
-          LATEST_CHANGED=$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'glossaries/**' | tr '\n' ' ')
-          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" $LATEST_CHANGED > linter_report.md
+          TARGETS=""
+          for f in ${{ steps.get_changed.outputs.files }}; do
+            if [ -f "$f" ]; then
+              TARGETS="$TARGETS $f"
+            elif [ -f "${f}.txt" ]; then
+              TARGETS="$TARGETS ${f}.txt"
+            fi
+          done
+          echo "质检目标文件: $TARGETS"
+          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" $TARGETS > linter_report.md
           echo "LINTER_EXIT_CODE=$?" >> $GITHUB_ENV
 
       - name: 发布或原地更新 Aria 审查评论
+        if: steps.get_changed.outputs.files != ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -124,6 +140,7 @@ jobs:
             }
 
       - name: 判定质检状态
+        if: steps.get_changed.outputs.files != ''
         run: |
           if [ "${{ env.LINTER_EXIT_CODE }}" != "0" ]; then
             echo "❌ Aria 检测到阻断性语法错误，请根据评论提示进行修改。"
