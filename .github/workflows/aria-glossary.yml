@@ -37,28 +37,35 @@ jobs:
         with:
           node-version: 20
 
-      - name: 自动修复缺失的 .txt 后缀（若有）
+      - name: 获取 PR 变动的文件列表
+        id: get_changed
+        run: |
+          cd pr_repo
+          BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
+          git fetch origin "$BASE_REF" --depth=1
+          CHANGED=$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'glossaries/**' | tr '\n' ' ')
+          echo "CHANGED_FILES=$CHANGED" >> $GITHUB_ENV
+          echo "PR 变动文件: $CHANGED"
+
+      - name: 自动修复缺失的 .txt 后缀（仅针对本次变动文件）
         id: auto_fix
         run: |
           cd pr_repo
           node -e '
             import fs from "node:fs";
             import path from "node:path";
-            const dir = path.resolve("glossaries");
+            const changed = (process.env.CHANGED_FILES || "").trim().split(/\s+/).filter(Boolean);
             let fixed = [];
-            if (fs.existsSync(dir)) {
-              for (const f of fs.readdirSync(dir)) {
-                if (f.startsWith(".") || f.endsWith(".json") || f.endsWith(".txt")) continue;
-                const full = path.join(dir, f);
-                if (fs.statSync(full).isFile()) {
-                  fs.renameSync(full, full + ".txt");
-                  fixed.push(f);
-                }
+            for (const f of changed) {
+              if (f.startsWith(".") || f.endsWith(".json") || f.endsWith(".txt")) continue;
+              if (fs.existsSync(f) && fs.statSync(f).isFile()) {
+                fs.renameSync(f, f + ".txt");
+                fixed.push(f);
               }
             }
             if (fixed.length > 0) {
               fs.writeFileSync(".auto_fixed_files.json", JSON.stringify(fixed));
-              console.log("Fixed files:", fixed);
+              console.log("Fixed files in PR:", fixed);
             }
           '
           if [ -f .auto_fixed_files.json ]; then
@@ -76,7 +83,9 @@ jobs:
         run: |
           cd pr_repo
           cp ../base_repo/tools/glossary-linter.mjs tools/glossary-linter.mjs
-          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" > linter_report.md
+          BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
+          LATEST_CHANGED=$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'glossaries/**' | tr '\n' ' ')
+          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" $LATEST_CHANGED > linter_report.md
           echo "LINTER_EXIT_CODE=$?" >> $GITHUB_ENV
 
       - name: 发布或原地更新 Aria 审查评论
