@@ -203,10 +203,45 @@ jobs:
 
             let wikiContent = fs.readFileSync(wikiFile, "utf-8");
 
+            function cleanValue(str, exampleKeyword) {
+              if (!str) return "";
+              let res = str.trim();
+              if (res.startsWith("{") && res.endsWith("}")) {
+                res = res.slice(1, -1).trim();
+              }
+              if (res.startsWith("例如：") || res.startsWith("例如:")) {
+                res = res.replace(/^例如[：:]\s*/, "").trim();
+                if (exampleKeyword && res.includes(exampleKeyword)) return "";
+              }
+              if (exampleKeyword && res.includes(exampleKeyword)) return "";
+              return res;
+            }
+
+            function extractField(body, pattern, exampleKeyword) {
+              const lines = body.split("\n");
+              for (let i = 0; i < lines.length; i++) {
+                if (pattern.test(lines[i])) {
+                  const afterColon = lines[i].replace(/^[^:：]+[:：]/, "").trim();
+                  if (afterColon) {
+                    const val = cleanValue(afterColon, exampleKeyword);
+                    if (val) return val;
+                  }
+                  for (let j = i + 1; j < lines.length; j++) {
+                    const next = lines[j].trim();
+                    if (!next) continue;
+                    if (next.startsWith("-") || next.startsWith("#")) break;
+                    const val = cleanValue(next, exampleKeyword);
+                    if (val) return val;
+                  }
+                }
+              }
+              return "";
+            }
+
             // 提取 PR 模板字段
-            const matchName = prBody.match(/作品原名[^\n]*\n+([^\n#\-]+)/i);
-            const matchAlias = prBody.match(/译名[^\n]*\n+([^\n#\-]+)/i);
-            const matchMaint = prBody.match(/维护者信息[^\n]*\n+([^\n#\-]+)/i);
+            const prWorkName = extractField(prBody, /作品原名/, "BanG Dream");
+            const prAliases = extractField(prBody, /译名|别名|搜索标签/, "梦想协奏曲");
+            const prMaintainer = extractField(prBody, /维护者/, "V-Lipset");
 
             // 获取本次合并的新增术语表文件
             const glossariesDir = path.resolve("glossaries");
@@ -219,7 +254,7 @@ jobs:
               // 检查 Wiki 是否已收录（通过文件名或作品原名）
               const alreadyExists = wikiContent.includes(`/${encodeURIComponent(f)}`) || 
                                    wikiContent.includes(`/${f}`) ||
-                                   (matchName && matchName[1] && wikiContent.includes(`### ${matchName[1].trim()}`));
+                                   (prWorkName && wikiContent.includes(`### ${prWorkName}`));
 
               if (alreadyExists) {
                 console.log(`术语表 "${f}" 已在 Wiki 中收录，保持 Wiki 不动。`);
@@ -228,9 +263,17 @@ jobs:
 
               console.log(`检测到新增术语表 "${f}"，准备写入 Wiki...`);
 
-              const workTitle = (matchName && matchName[1].trim()) ? matchName[1].trim() : baseName;
-              const aliases = (matchAlias && matchAlias[1].trim()) ? matchAlias[1].trim() : "";
-              const maintainerRaw = (matchMaint && matchMaint[1].trim()) ? matchMaint[1].trim() : "社区贡献者";
+              // 读取文件内头部维护者作为兜底
+              let fileMaintainer = "";
+              try {
+                const fileText = fs.readFileSync(path.join(glossariesDir, f), "utf-8");
+                const mLine = fileText.split("\n").find(l => l.trim().startsWith("维护者"));
+                if (mLine) fileMaintainer = mLine.replace(/^维护者[:：]\s*/, "").trim();
+              } catch (e) {}
+
+              const workTitle = prWorkName || baseName.replace(/_/g, " ");
+              const aliases = prAliases || "";
+              const maintainerRaw = prMaintainer || fileMaintainer || "社区贡献者";
               
               // 构造标准 Wiki 条目
               let newEntry = `\n### ${workTitle}\n`;
