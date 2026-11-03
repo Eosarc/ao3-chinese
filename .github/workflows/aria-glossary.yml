@@ -31,6 +31,7 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           path: pr_repo
           fetch-depth: 0
+          allow-unsafe-pr-checkout: true
 
       - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
