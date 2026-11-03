@@ -430,7 +430,7 @@ export function autoFixMissingTxtExtensions(dirPath) {
 }
 
 /**
- * 检查 PR 描述表单内容（单选防呆校验）
+ * 检查 PR 描述表单内容（单选防呆与合规校验）
  */
 export function checkPrBody(body) {
   const warnings = [];
@@ -448,6 +448,17 @@ export function checkPrBody(body) {
   const changeMatches = body.match(/\[[xX]\]\s*(?:新增在线术语表|更新已有在线术语表)/g) || [];
   if (changeMatches.length > 1) {
     warnings.push('「变更类型」同时勾选了“新增”与“更新”，建议单选其一。');
+  }
+
+  // 检查是否同意收录至 Wiki
+  if (!/\[[xX]\]\s*同意收录至\s*AO3\s*Translator/i.test(body)) {
+    warnings.push('检测到未勾选「同意收录至 AO3 Translator 官方在线术语库」，若合并，本术语表将不会自动写入官方 Wiki。若有意公开分享给其他读者，请勾选该项。');
+  }
+
+  // 检查填写的 Raw 链接是否为 patch 临时分支
+  const rawMatch = body.match(/https?:\/\/raw\.githubusercontent\.com\/[^\s\)\}\]]+/);
+  if (rawMatch && rawMatch[0].includes('/patch-')) {
+    warnings.push(`检测到填写的 Raw 链接包含临时分支路径（${rawMatch[0]}）。临时分支可能被意外删除，建议使用固定的 main 分支链接。`);
   }
 
   return warnings;
