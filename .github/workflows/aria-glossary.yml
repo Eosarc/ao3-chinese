@@ -1,0 +1,243 @@
+name: Aria Glossary Review & Wiki Sync
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - 'glossaries/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  lint-and-review:
+    name: Aria 术语表智能审查
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出基础仓库代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref || 'main' }}
+          path: base_repo
+
+      - name: 检出 PR 分支代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          path: pr_repo
+          fetch-depth: 0
+
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 自动修复缺失的 .txt 后缀（若有）
+        id: auto_fix
+        run: |
+          cd pr_repo
+          node -e '
+            import fs from "node:fs";
+            import path from "node:path";
+            const dir = path.resolve("glossaries");
+            let fixed = [];
+            if (fs.existsSync(dir)) {
+              for (const f of fs.readdirSync(dir)) {
+                if (f.startsWith(".") || f.endsWith(".json") || f.endsWith(".txt")) continue;
+                const full = path.join(dir, f);
+                if (fs.statSync(full).isFile()) {
+                  fs.renameSync(full, full + ".txt");
+                  fixed.push(f);
+                }
+              }
+            }
+            if (fixed.length > 0) {
+              fs.writeFileSync(".auto_fixed_files.json", JSON.stringify(fixed));
+              console.log("Fixed files:", fixed);
+            }
+          '
+          if [ -f .auto_fixed_files.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add glossaries/
+            git commit -m "chore: 自动为在线术语表文件补充 .txt 后缀"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }} || true
+            rm .auto_fixed_files.json
+          fi
+
+      - name: 运行 Aria 质检脚本
+        id: aria_linter
+        continue-on-error: true
+        run: |
+          cd pr_repo
+          cp ../base_repo/tools/glossary-linter.mjs tools/glossary-linter.mjs
+          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" > linter_report.md
+          echo "LINTER_EXIT_CODE=$?" >> $GITHUB_ENV
+
+      - name: 发布或原地更新 Aria 审查评论
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'pr_repo/linter_report.md';
+            if (!fs.existsSync(reportPath)) return;
+            const reportBody = fs.readFileSync(reportPath, 'utf-8');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const ariaComment = comments.find(c => c.body.includes('<!-- aria-glossary-review -->'));
+
+            if (ariaComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: ariaComment.id,
+                body: reportBody
+              });
+              console.log('Aria 审查评论已就地更新。');
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: reportBody
+              });
+              console.log('Aria 审查评论已创建。');
+            }
+
+      - name: 判定质检状态
+        run: |
+          if [ "${{ env.LINTER_EXIT_CODE }}" != "0" ]; then
+            echo "❌ Aria 检测到阻断性语法错误，请根据评论提示进行修改。"
+            exit 1
+          else
+            echo "✅ Aria 质检通过。"
+          fi
+
+  sync-to-wiki:
+    name: 同步新术语表至 Wiki
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    env:
+      HAS_WIKI_PAT: ${{ secrets.WIKI_PAT != '' }}
+
+    steps:
+      - name: 检查 Wiki 凭据是否具备
+        if: env.HAS_WIKI_PAT != 'true'
+        run: |
+          echo "未检测到 WIKI_PAT 密钥，跳过 Wiki 自动写入。"
+          exit 0
+
+      - name: 检出基础仓库最新代码
+        if: env.HAS_WIKI_PAT == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref || 'main' }}
+          path: main_repo
+
+      - name: 检出 Wiki 仓库
+        if: env.HAS_WIKI_PAT == 'true'
+        continue-on-error: true
+        id: checkout_wiki
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}.wiki
+          token: ${{ secrets.WIKI_PAT }}
+          path: wiki_repo
+
+      - name: 写入 Wiki 在线术语库
+        if: steps.checkout_wiki.outcome == 'success'
+        run: |
+          cd main_repo
+          node -e '
+            import fs from "node:fs";
+            import path from "node:path";
+
+            const prBody = process.env.PR_BODY || "";
+            const prNumber = process.env.PR_NUMBER;
+            const repoFullName = process.env.GITHUB_REPOSITORY;
+            const wikiFile = path.resolve("../wiki_repo/在线术语库.md");
+
+            if (!fs.existsSync(wikiFile)) {
+              console.log("未找到 Wiki 在线术语库.md，跳过同步。");
+              process.exit(0);
+            }
+
+            let wikiContent = fs.readFileSync(wikiFile, "utf-8");
+
+            // 提取 PR 模板字段
+            const matchName = prBody.match(/作品原名[^\n]*\n+([^\n#\-]+)/i);
+            const matchAlias = prBody.match(/译名[^\n]*\n+([^\n#\-]+)/i);
+            const matchMaint = prBody.match(/维护者信息[^\n]*\n+([^\n#\-]+)/i);
+
+            // 获取本次合并的新增术语表文件
+            const glossariesDir = path.resolve("glossaries");
+            const files = fs.readdirSync(glossariesDir).filter(f => f.endsWith(".txt"));
+
+            for (const f of files) {
+              const baseName = f.replace(/\.txt$/, "");
+              const rawUrl = `https://raw.githubusercontent.com/${repoFullName}/main/glossaries/${encodeURIComponent(f)}`;
+              
+              // 检查 Wiki 是否已收录（通过文件名或作品原名）
+              const alreadyExists = wikiContent.includes(`/${encodeURIComponent(f)}`) || 
+                                   wikiContent.includes(`/${f}`) ||
+                                   (matchName && matchName[1] && wikiContent.includes(`### ${matchName[1].trim()}`));
+
+              if (alreadyExists) {
+                console.log(`术语表 "${f}" 已在 Wiki 中收录，保持 Wiki 不动。`);
+                continue;
+              }
+
+              console.log(`检测到新增术语表 "${f}"，准备写入 Wiki...`);
+
+              const workTitle = (matchName && matchName[1].trim()) ? matchName[1].trim() : baseName;
+              const aliases = (matchAlias && matchAlias[1].trim()) ? matchAlias[1].trim() : "";
+              const maintainerRaw = (matchMaint && matchMaint[1].trim()) ? matchMaint[1].trim() : "社区贡献者";
+              
+              // 构造标准 Wiki 条目
+              let newEntry = `\n### ${workTitle}\n`;
+              if (aliases) {
+                newEntry += `* 译名：${aliases}\n`;
+              }
+              if (maintainerRaw.startsWith("http")) {
+                newEntry += `* 维护者：[${maintainerRaw}](${maintainerRaw})\n`;
+              } else if (maintainerRaw.includes("@")) {
+                newEntry += `* 维护者：[${maintainerRaw}](mailto:${maintainerRaw})\n`;
+              } else {
+                newEntry += `* 维护者：[${maintainerRaw}](https://github.com/${maintainerRaw})\n`;
+              }
+              newEntry += `* 链接：${rawUrl}\n`;
+
+              wikiContent += newEntry;
+              fs.writeFileSync(wikiFile, wikiContent, "utf-8");
+              console.log(`已将 "${workTitle}" 写入 Wiki。`);
+            }
+          '
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: 提交并推送到 Wiki 仓库
+        if: steps.checkout_wiki.outcome == 'success'
+        run: |
+          cd wiki_repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add 在线术语库.md
+          if git diff --staged --quiet; then
+            echo "Wiki 内容无变动，无需推送。"
+          else
+            git commit -m "docs: 自动收录来自 PR #${{ github.event.pull_request.number }} 的新增在线术语表"
+            git push origin master || git push origin main
+            echo "Wiki 更新推送成功，将自动触发 sync_wiki_to_json 工作流。"
+          fi
