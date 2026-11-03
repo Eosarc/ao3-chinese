@@ -366,7 +366,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       if (punctuationMatch && !isQuoted) {
         if (key.includes("'") || key.includes('‘')) {
           fileReport.errors.push(`第 ${lineNo} 行词条原文 "${key}" 包含撇号/单引号，必须使用半角双引号包裹（如 "${key}"：${val}），否则会导致 AOT 解析丢弃整行规则！`);
-        } else {
+        } else if (!key.includes('/')) {
           fileReport.warnings.push(`第 ${lineNo} 行词条原文 "${key}" 包含标点符号但未用双引号包裹。建议使用双引号包裹原文（如 "${key}"：${val}）以开启精准字面量匹配，避免被拆词或符号影响。`);
         }
       }
@@ -503,6 +503,11 @@ if (isMainModule) {
   let autoFixed = [];
   if (shouldFix) {
     autoFixed = autoFixMissingTxtExtensions(glossariesDir);
+  } else if (fs.existsSync('.auto_fixed_files.json')) {
+    try {
+      const list = JSON.parse(fs.readFileSync('.auto_fixed_files.json', 'utf-8'));
+      autoFixed = list.map(f => ({ oldName: path.basename(f), newName: `${path.basename(f)}.txt` }));
+    } catch (e) {}
   }
 
   let filesToLint = [];

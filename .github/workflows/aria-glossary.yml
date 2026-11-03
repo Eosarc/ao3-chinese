@@ -81,7 +81,6 @@ jobs:
             git add glossaries/
             git commit -m "chore: 自动为在线术语表文件补充 .txt 后缀"
             git push origin HEAD:${{ github.event.pull_request.head.ref }} || true
-            rm .auto_fixed_files.json
           fi
 
       - name: 运行 Aria 质检脚本
@@ -100,8 +99,10 @@ jobs:
             fi
           done
           echo "质检目标文件: $TARGETS"
-          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" $TARGETS > linter_report.md
-          echo "LINTER_EXIT_CODE=$?" >> $GITHUB_ENV
+          CODE=0
+          node tools/glossary-linter.mjs --head-branch "${{ github.event.pull_request.head.ref }}" $TARGETS > linter_report.md || CODE=$?
+          echo "LINTER_EXIT_CODE=$CODE" >> $GITHUB_ENV
+          rm -f .auto_fixed_files.json
 
       - name: 发布或原地更新 Aria 审查评论
         if: steps.get_changed.outputs.files != ''
