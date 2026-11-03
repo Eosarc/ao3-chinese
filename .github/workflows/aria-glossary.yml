@@ -235,14 +235,17 @@ jobs:
               if (aliases) {
                 newEntry += `* 译名：${aliases}\n`;
               }
-              if (maintainerRaw.startsWith("http")) {
+              newEntry += `* 链接：[${rawUrl}](${rawUrl})\n`;
+              const maintLinkMatch = maintainerRaw.match(/\[(.*?)\]\((.*?)\)/);
+              if (maintLinkMatch) {
+                newEntry += `* 维护者：[${maintLinkMatch[1].trim()}](${maintLinkMatch[2].trim()})\n`;
+              } else if (maintainerRaw.startsWith("http")) {
                 newEntry += `* 维护者：[${maintainerRaw}](${maintainerRaw})\n`;
               } else if (maintainerRaw.includes("@")) {
                 newEntry += `* 维护者：[${maintainerRaw}](mailto:${maintainerRaw})\n`;
               } else {
                 newEntry += `* 维护者：[${maintainerRaw}](https://github.com/${maintainerRaw})\n`;
               }
-              newEntry += `* 链接：${rawUrl}\n`;
 
               wikiContent += newEntry;
               fs.writeFileSync(wikiFile, wikiContent, "utf-8");
