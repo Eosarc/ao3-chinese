@@ -632,40 +632,39 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
   md += `### 目录\n\n`;
   if (isSingle) {
     const report = reports[0];
-    md += `- [规则统计](#user-content-规则统计)\n`;
+    md += `- 规则统计\n`;
     if (report.errors.length > 0) {
-      md += `- [阻断性错误](#user-content-阻断性错误)\n`;
+      md += `- 阻断性错误\n`;
     }
     if (report.warnings.length > 0) {
-      md += `- [格式与体验建议](#user-content-格式与体验建议)\n`;
+      md += `- 格式与体验建议\n`;
     }
     if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
-      md += `- [优化版本参考](#user-content-优化版本参考)\n`;
-      md += `  - [1. 基础修复版](#user-content-1-基础修复版)\n`;
-      md += `  - [2. 体验最佳版](#user-content-2-体验最佳版)\n`;
+      md += `- 优化版本参考\n`;
+      md += `  - 1. 基础修复版\n`;
+      md += `  - 2. 体验最佳版\n`;
     }
     if (!isHeadBranchMain) {
-      md += `- [分支更新建议](#user-content-分支更新建议)\n`;
+      md += `- 分支更新建议\n`;
     }
   } else {
     for (const report of reports) {
-      const fileSlug = report.file.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
-      md += `- [文件：\`${report.file}\`](#user-content-文件${fileSlug})\n`;
-      md += `  - [规则统计](#user-content-${fileSlug}-规则统计)\n`;
+      md += `- 文件：\`${report.file}\`\n`;
+      md += `  - 规则统计\n`;
       if (report.errors.length > 0) {
-        md += `  - [阻断性错误](#user-content-${fileSlug}-阻断性错误)\n`;
+        md += `  - 阻断性错误\n`;
       }
       if (report.warnings.length > 0) {
-        md += `  - [格式与体验建议](#user-content-${fileSlug}-格式与体验建议)\n`;
+        md += `  - 格式与体验建议\n`;
       }
       if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
-        md += `  - [优化版本参考](#user-content-${fileSlug}-优化版本参考)\n`;
-        md += `    - [1. 基础修复版](#user-content-${fileSlug}-1-基础修复版)\n`;
-        md += `    - [2. 体验最佳版](#user-content-${fileSlug}-2-体验最佳版)\n`;
+        md += `  - 优化版本参考\n`;
+        md += `    - 1. 基础修复版\n`;
+        md += `    - 2. 体验最佳版\n`;
       }
     }
     if (!isHeadBranchMain) {
-      md += `- [分支更新建议](#user-content-分支更新建议)\n`;
+      md += `- 分支更新建议\n`;
     }
   }
   md += `\n`;
@@ -709,15 +708,15 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
     if (!isSingle) {
       md += `### 文件：\`${report.file}\`\n\n`;
-      md += `#### <a id="${fileSlug}-规则统计"></a>规则统计\n\n`;
+      md += `#### 规则统计\n\n`;
     } else {
-      md += `### <a id="规则统计"></a>规则统计\n\n`;
+      md += `### 规则统计\n\n`;
     }
     md += `词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
 
     // 阻断性错误
     if (report.errors.length > 0) {
-      md += isSingle ? `### <a id="阻断性错误"></a>阻断性错误\n\n` : `#### <a id="${fileSlug}-阻断性错误"></a>阻断性错误\n\n`;
+      md += isSingle ? `### 阻断性错误\n\n` : `#### 阻断性错误\n\n`;
       let errIdx = 1;
       const sortedErrorKeys = Object.keys(report.errorGroups).sort((a, b) => {
         const ia = ORDERED_ERROR_KEYS.indexOf(a);
@@ -746,7 +745,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
     // 格式与体验建议
     if (report.warnings.length > 0) {
-      md += isSingle ? `### <a id="格式与体验建议"></a>格式与体验建议\n\n` : `#### <a id="${fileSlug}-格式与体验建议"></a>格式与体验建议\n\n`;
+      md += isSingle ? `### 格式与体验建议\n\n` : `#### 格式与体验建议\n\n`;
       let warnIdx = 1;
       const sortedWarningKeys = Object.keys(report.warningGroups).sort((a, b) => {
         const ia = ORDERED_WARNING_KEYS.indexOf(a);
@@ -790,15 +789,15 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
       const fixedRecommended = generateFixedGlossary(report.rawContent, 'recommended');
 
       md += `---\n\n`;
-      md += isSingle ? `### <a id="优化版本参考"></a>优化版本参考\n\n` : `#### <a id="${fileSlug}-优化版本参考"></a>优化版本参考\n\n`;
-      md += isSingle ? `#### <a id="1-基础修复版"></a>1. 基础修复版\n\n` : `##### 1. 基础修复版\n\n`;
+      md += isSingle ? `### 优化版本参考\n\n` : `#### 优化版本参考\n\n`;
+      md += isSingle ? `#### 1. 基础修复版\n\n` : `##### 1. 基础修复版\n\n`;
       md += `> [!TIP]\n`;
       md += `> 该版本仅修复阻断性错误：补齐缺失分隔符、拆分斜杠同义词、转义引号等，保留维护者原有的冒号匹配习惯、注释与格式。\n\n`;
       md += '```text\n';
       md += fixedMinimal.trim() + '\n';
       md += '```\n\n';
 
-      md += isSingle ? `#### <a id="2-体验最佳版"></a>2. 体验最佳版\n\n` : `##### 2. 体验最佳版\n\n`;
+      md += isSingle ? `#### 2. 体验最佳版\n\n` : `##### 2. 体验最佳版\n\n`;
       md += `> [!TIP]\n`;
       md += `> 该版本在版本 1 的基础上，进一步完成了：\n`;
       md += `> 1. 将符合复合专有名词结构的规则升级为 \`=\` 语法，使单独名、姓也能自动翻译；\n`;
@@ -814,7 +813,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
   if (!isHeadBranchMain) {
     md += `---\n\n`;
-    md += `### <a id="分支更新建议"></a>分支更新建议\n\n`;
+    md += `### 分支更新建议\n\n`;
     md += `> [!TIP]\n`;
     md += `> 检测到本次 PR 的源分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
   }
