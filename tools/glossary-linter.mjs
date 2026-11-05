@@ -203,7 +203,7 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
       if (SECTION_HEADERS[key].includes(cleanHeader)) {
         inSection = key;
         isHeader = true;
-        result.push(rawLine);
+        result.push(trimmed.replace(/[:：\s]*$/, ''));
         break;
       }
     }
@@ -285,7 +285,7 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
     let val = parsed.value.trim();
     let sep = parsed.separator === '=' ? ' = ' : '：';
 
-    // 修复等号两侧分段数不匹配问题（转为冒号以确保 CI 通过）
+    // 修复等号两侧分段数不匹配问题（转为冒号以确保兼容）
     if (parsed.separator === '=') {
       const keyParts = smartSplit(key.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
       const valParts = smartSplit(val.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
@@ -312,9 +312,10 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
       }
 
       if (mode === 'recommended') {
-        // 标点与连字符包裹双引号
-        const hasPunctuation = finalKey.replace(/^["“](.*)["”]$/, '$1').match(/[\'\’\-\(\)\[\]\!\?\:\.\/]/);
-        if (hasPunctuation && !finalKey.startsWith('"')) {
+        // 连字符特别豁免，只为包含其它非连字符标点的词条加双引号
+        const keyWithoutHyphens = finalKey.replace(/^["“]|["”]$/g, '').replace(/[\-\—\–\－]/g, '');
+        const hasOtherPunctuation = keyWithoutHyphens.match(/[\'\’\‘\(\)\[\]\{\}\<\>\!\?\:\.\/\&\|\$\#\@\*\+\=\^\~]/);
+        if (hasOtherPunctuation && !finalKey.startsWith('"')) {
           finalKey = `"${finalKey.replace(/^["“]|["”]$/g, '')}"`;
         }
 
@@ -327,10 +328,9 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
           }
         }
 
-        // 重复词条去重
+        // 去除重复规则（直接略过，不生成额外注释）
         const lowerKey = finalKey.toLowerCase();
         if (seenKeys.has(lowerKey)) {
-          result.push(`// [重复词条已略过] ${finalKey}${finalSep}${finalVal}`);
           continue;
         }
         seenKeys.add(lowerKey);
@@ -350,7 +350,7 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
     }
   }
 
-  return result.join('\n');
+  return result.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 /**
@@ -377,17 +377,17 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
     }
   };
 
-  function addIssue(groupMap, list, typeKey, typeTitle, itemSnippet, fullText) {
+  function addIssue(groupMap, list, typeKey, typeTitle, fullLine) {
     if (!groupMap[typeKey]) {
       groupMap[typeKey] = { title: typeTitle, items: [] };
     }
-    groupMap[typeKey].items.push({ snippet: itemSnippet, full: fullText });
-    list.push(fullText);
+    groupMap[typeKey].items.push(fullLine);
+    list.push(fullLine);
   }
 
   // 1. 文件后缀检查
   if (!fileName.endsWith('.txt')) {
-    addIssue(fileReport.errorGroups, fileReport.errors, 'file_ext', '文件缺少 ".txt" 后缀', fileName, '文件缺少 ".txt" 后缀。AOT 在线术语表文件必须以 ".txt" 结尾。');
+    addIssue(fileReport.errorGroups, fileReport.errors, 'file_ext', '文件缺少 `.txt` 后缀', fileName);
   }
 
   // 2. 扫描并定位各区域
@@ -430,22 +430,22 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       const key = keyMap[rawKey] || rawKey;
       metadata[key] = val;
     } else if (!item.text.trim().startsWith('//')) {
-      addIssue(fileReport.warningGroups, fileReport.warnings, 'metadata_format', '元数据格式不规范', `第 ${item.lineNo} 行: "${item.text.trim()}"`, `第 ${item.lineNo} 行元数据 "${item.text.trim()}" 未能被识别为有效元数据。请使用「键：值」格式。`);
+      addIssue(fileReport.warningGroups, fileReport.warnings, 'metadata_format', '元数据格式不规范', item.text.trim());
     }
   }
 
   if (!metadata.version) {
-    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_version', '元数据缺失版本号', '缺少版本号', '文件头部缺少必填的 "版本号"（例如「版本号：1.0.0」）。客户端依赖该字段执行版本检测。');
+    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_version', '元数据缺失版本号', '版本号：1.0.0');
   }
   if (!metadata.maintainer) {
-    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_maintainer', '元数据缺失维护者', '缺少维护者', '文件头部缺少必填的 "维护者"（例如「维护者：昵称」）。');
+    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_maintainer', '元数据缺失维护者', '维护者：昵称');
   }
 
   // 日期格式检查
   if (metadata.last_updated) {
     const dateStr = metadata.last_updated;
     if (/^\d{2}[-/.]\d{2}[-/.]\d{4}$/.test(dateStr)) {
-      addIssue(fileReport.warningGroups, fileReport.warnings, 'date_format', '更新时间日期格式建议', `更新时间 "${dateStr}"`, `元数据中更新时间 "${dateStr}" 存在日-月-年与月-日-年的二义性，建议统一使用 ISO 8601 标准「YYYY-MM-DD」格式（例如「更新时间：2026-11-02」）。`);
+      addIssue(fileReport.warningGroups, fileReport.warnings, 'date_format', '元数据中更新时间存在 `日-月-年` 与 `月-日-年` 的二义性。建议统一使用 ISO 8601 标准 YYYY-MM-DD 格式。', `更新时间：${dateStr}`);
     }
   }
 
@@ -456,14 +456,14 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       const baseVersion = baseMatch[1].trim();
       const cmp = compareVersions(metadata.version, baseVersion);
       if (cmp <= 0) {
-        addIssue(fileReport.errorGroups, fileReport.errors, 'version_not_bumped', '版本号未递增', `当前 v${metadata.version} <= 主分支 v${baseVersion}`, `当前版本号 (v${metadata.version}) 必须大于主分支已有版本号 (v${baseVersion})。若未提升版本号，已订阅读者客户端将无法自动同步更新。`);
+        addIssue(fileReport.errorGroups, fileReport.errors, 'version_not_bumped', '版本号未递增', `当前版本号 (v${metadata.version}) 必须大于主分支已有版本号 (v${baseVersion})`);
       }
     }
   }
 
   // 4. 有效分区检查
   if (sections.length === 0) {
-    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_section', '文件缺少有效分区标题', '未找到有效分区', '文件结构错误：未找到任何有效分区标题。请至少包含「词条」、「通用词条」、「禁翻词条」或「正则表达式」中的一个。');
+    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_section', '文件缺少有效分区标题', '请至少包含「词条」、「通用词条」、「禁翻词条」或「正则表达式」中的一个。');
     return fileReport;
   }
 
@@ -483,13 +483,12 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       // 检查行尾注释 //
       if (line.includes('//') && !line.startsWith('//')) {
-        const commentPart = line.substring(line.indexOf('//')).trim();
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'inline_comment', '词条包含行尾注释（会被当成译文一同替换，建议另起一行）', `第 ${lineNo} 行："${commentPart}"`, `第 ${lineNo} 行词条内包含行尾注释 "${commentPart}"。AOT 客户端不会自动剔除行尾注释，注释内容会被当成译文一同替换进正文！建议将说明注释单独另起一行。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'inline_comment', '规则内包含行尾注释。建议将说明/注释单独另起一行。', rawLine.trim());
       }
 
       // 检查行尾多余逗号
       if (/[,，]$/.test(line)) {
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'trailing_comma', '行末含有多余逗号', `第 ${lineNo} 行`, `第 ${lineNo} 行末尾含有多余的逗号，建议移除。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'trailing_comma', '行末含有多余逗号', rawLine.trim());
       }
 
       const cleanLine = line.replace(/[,，]$/, '');
@@ -497,7 +496,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       if (section.type === 'FORBIDDEN_TERMS') {
         fileReport.stats.forbiddenTerms++;
         if (cleanLine.includes(':') || cleanLine.includes('：') || cleanLine.includes('=')) {
-          addIssue(fileReport.warningGroups, fileReport.warnings, 'forbidden_term_sep', '禁翻词条包含了分隔符或译文（只需保留词条本身）', `第 ${lineNo} 行："${cleanLine}"`, `第 ${lineNo} 行禁翻词条 "${cleanLine}" 包含了分隔符或译文。禁翻词条区只需填写需要保持原文不被翻译的词条本身即可。`);
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'forbidden_term_sep', '禁翻词条包含了分隔符或译文', rawLine.trim());
         }
         continue;
       }
@@ -506,20 +505,20 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
         fileReport.stats.regexTerms++;
         const regexMatch = cleanLine.match(/^(.+?)\s*[:：]\s*(.*)$/s);
         if (!regexMatch) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'regex_missing_sep', '正则表达式缺少冒号分隔符', `第 ${lineNo} 行`, `第 ${lineNo} 行正则表达式缺少冒号分隔符。正则区格式应为「正则表达式: 替换后的文本」。`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'regex_missing_sep', '正则表达式缺少冒号分隔符', rawLine.trim());
           continue;
         }
         const pattern = regexMatch[1].trim();
         try {
           const testRegex = new RegExp(pattern);
           if (testRegex.test('')) {
-            addIssue(fileReport.errorGroups, fileReport.errors, 'regex_empty_match', '正则表达式能匹配空字符串（会导致死循环卡死）', `第 ${lineNo} 行："${pattern}"`, `第 ${lineNo} 行正则表达式 "${pattern}" 能够匹配空字符串。这会导致浏览器端死循环卡死！`);
+            addIssue(fileReport.errorGroups, fileReport.errors, 'regex_empty_match', '正则表达式能匹配空字符串', rawLine.trim());
           }
           if (/[\(][^()]*[*+{][^()]*[\)][*+]/.test(pattern)) {
-            addIssue(fileReport.errorGroups, fileReport.errors, 'regex_redos', '正则表达式包含嵌套量词（ReDoS 假死风险）', `第 ${lineNo} 行："${pattern}"`, `第 ${lineNo} 行正则表达式 "${pattern}" 包含嵌套量词，存在灾难性回溯（ReDoS）假死风险。`);
+            addIssue(fileReport.errorGroups, fileReport.errors, 'regex_redos', '正则表达式包含嵌套量词（ReDoS 假死风险）', rawLine.trim());
           }
         } catch (e) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'regex_syntax', '正则表达式语法非法', `第 ${lineNo} 行: ${e.message}`, `第 ${lineNo} 行正则表达式 "${pattern}" 语法非法: ${e.message}`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'regex_syntax', '正则表达式语法非法', rawLine.trim());
         }
         continue;
       }
@@ -530,15 +529,15 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       const wholeQuoted = isWholeLineQuotedWithSeparator(cleanLine);
       if (wholeQuoted) {
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'whole_line_quoted', '引号包裹了整条规则而非仅包裹词条', `第 ${lineNo} 行："${cleanLine}" -> 建议改为 ${wholeQuoted.key}：${wholeQuoted.value}`, `第 ${lineNo} 行引号包裹了整条规则，而非仅包裹词条。请改为「引号只包词条、分隔符放引号外」，例如 ${wholeQuoted.key}：${wholeQuoted.value}。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'whole_line_quoted', '引号包裹了整条规则。建议引号只包裹原文词条、分隔符放引号外。', rawLine.trim());
       }
 
       const parsed = wholeQuoted ? { key: wholeQuoted.key, value: wholeQuoted.value, separator: ':' } : parseGlossaryKeyValuePair(cleanLine);
       if (!parsed) {
         if (cleanLine.includes("'") || cleanLine.includes('‘')) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '词条原文包含撇号/单引号但未用双引号包裹（会导致规则被丢弃）', `第 ${lineNo} 行："${cleanLine}"`, `第 ${lineNo} 行词条 "${cleanLine}" 原文包含撇号/单引号但未用双引号包裹。客户端解析器会因找不到闭合单引号而直接丢弃整行规则！请改为在原文两端加半角双引号，例如："${cleanLine.split(/[:：=＝]/)[0]}"：...`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含标点符号但未用 `"` 包裹', rawLine.trim());
         } else {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'missing_separator', '词条缺失冒号 (:) 或等号 (=) 分隔符（已被客户端跳过）', `第 ${lineNo} 行："${cleanLine}"`, `第 ${lineNo} 行词条 "${cleanLine}" 缺失冒号 (:) 或等号 (=) 分隔符，已被客户端跳过。若仅有空格分隔，请补齐分隔符。`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'missing_separator', '规则缺失冒号 `:` 或等号 `=` 分隔符', rawLine.trim());
         }
         continue;
       }
@@ -548,47 +547,47 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       // 检查原文中是否使用了斜杠 / 表示并列
       if (key.includes('/') && !key.includes('://')) {
-        addIssue(fileReport.errorGroups, fileReport.errors, 'slash_in_key', '词条原文包含斜杠 "/"（AOT 不支持斜杠表达同义词，请拆分为多行）', `第 ${lineNo} 行："${key}"`, `第 ${lineNo} 行词条原文 "${key}" 包含了斜杠 "/"。AOT 不支持用斜杠表达同义词或备选词，这会导致整个包含斜杠的长短语整体匹配，两边的独立词汇均无法被翻译！请拆分为独立的多行词条。`);
+        addIssue(fileReport.errorGroups, fileReport.errors, 'slash_in_key', '规则原文包含斜杠 `/`', rawLine.trim());
       }
 
-      // 检查原文是否包含标点符号但未用半角双引号包裹
+      // 检查原文是否包含标点符号但未用双引号包裹
       const isQuoted = (key.startsWith('"') && key.endsWith('"')) || (key.startsWith('“') && key.endsWith('”'));
-      const punctuationMatch = key.replace(/^["“](.*)["”]$/, '$1').match(/[\'\’\-\(\)\[\]\!\?\:\.\/]/);
-      if (punctuationMatch && !isQuoted) {
-        if (key.includes("'") || key.includes('‘')) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '词条原文包含撇号/单引号但未用双引号包裹（会导致规则被丢弃）', `第 ${lineNo} 行："${key}"`, `第 ${lineNo} 行词条原文 "${key}" 包含撇号/单引号，必须使用半角双引号包裹（如 "${key}"：${val}），否则会导致 AOT 解析丢弃整行规则！`);
+      const hasApostrophe = /[\'‘’]/.test(key);
+
+      if (!isQuoted) {
+        if (hasApostrophe) {
+          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含标点符号但未用 `"` 包裹', rawLine.trim());
         } else if (!key.includes('/')) {
-          addIssue(fileReport.warningGroups, fileReport.warnings, 'unquoted_punctuation', '词条原文包含标点符号但未用双引号包裹（建议加双引号开启精准匹配）', `第 ${lineNo} 行："${key}"`, `第 ${lineNo} 行词条原文 "${key}" 包含标点符号但未用双引号包裹。建议使用双引号包裹原文（如 "${key}"：${val}）以开启精准字面量匹配，避免被拆词或符号影响。`);
+          // 连字符特别豁免，只检测连字符以外的其它非连字符标点
+          const keyWithoutHyphens = key.replace(/[\-\—\–\－]/g, '');
+          const hasOtherPunctuation = keyWithoutHyphens.match(/[\(\)\[\]\{\}\<\>\!\?\:\.\/\&\|\$\#\@\*\+\=\^\~]/);
+          if (hasOtherPunctuation) {
+            addIssue(fileReport.warningGroups, fileReport.warnings, 'unquoted_punctuation', '词条原文包含标点符号但未用 `"` 包裹。建议加 `"` 开启精准匹配。', rawLine.trim());
+          }
         }
       }
 
-      // 检查等号关联语法（=）
+      // 检查等号关联语法（=）：放进“格式与体验建议”
       if (parsed.separator === '=') {
         const keyParts = smartSplit(key.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
         const valParts = smartSplit(val.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
         if (keyParts.length > 1 && keyParts.length !== valParts.length) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'unequal_equal_parts', '等号关联规则两侧分段数不一致（要求空格/·对等）', `第 ${lineNo} 行："${key} = ${val}" (原文 ${keyParts.length} 段, 译文 ${valParts.length} 段)`, `第 ${lineNo} 行等号关联规则 "${key} = ${val}" 的原文分段数 (${keyParts.length}) 与译文分段数 (${valParts.length}) 不一致。AOT 要求等号两侧段数必须完全对等（以空格或·分隔），否则拆分单姓名/单词规则将完全失效！`);
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'unequal_equal_parts', '规则原文部分数与译文部分数不一致', rawLine.trim());
         }
       } else {
         // 使用冒号但原文为人名多词
         if (section.type === 'TERMS') {
           const parts = smartSplit(key, TERM_SEPARATOR_RE);
           if (parts.length > 1 && (val.includes(' ') || val.includes('·'))) {
-            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '人名使用了冒号 ":"（建议改用等号语法以支持单名/姓氏匹配）', `第 ${lineNo} 行："${key}"`, `第 ${lineNo} 行人名 "${key}" 使用了冒号 ":"。如果希望在小说中单独出现主角名字或姓氏时也能自动匹配，建议改用等号语法（如 "${key} = ${val}"）。若作者有意只匹配全名，可忽略本条建议。`);
+            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '人名使用了 `:` 语法。建议改用 `=` 语法以支持单名、姓氏匹配。', rawLine.trim());
           }
         }
-      }
-
-      // 检查译文内残留未闭合的分隔符
-      if (val && !/^https?:\/\//.test(val) && hasTopLevelResidualSeparator(val)) {
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'residual_sep_in_val', '译文内含有额外的冒号或等号分隔符', `第 ${lineNo} 行："${val}"`, `第 ${lineNo} 行译文 "${val}" 内含有额外的冒号或等号分隔符，请确认是否为误输入。如需在译文中保留标点，请用双引号包裹。`);
       }
 
       // 检查重复词条
       const lowerKey = key.toLowerCase();
       if (seenKeys.has(lowerKey)) {
-        const prevLine = seenKeys.get(lowerKey);
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'duplicate_term', '词条重复定义', `第 ${lineNo} 行："${key}" (已在第 ${prevLine} 行定义)`, `第 ${lineNo} 行词条 "${key}" 重复定义（已在第 ${prevLine} 行定义过）。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'duplicate_term', '存在重复规则', rawLine.trim());
       } else {
         seenKeys.set(lowerKey, lineNo);
       }
@@ -599,62 +598,6 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 }
 
 /**
- * 格式化渲染聚合问题分组
- */
-function renderIssueGroups(groupMap, prefix = '错误', collapseThreshold = 3) {
-  let out = '';
-  for (const groupKey in groupMap) {
-    const group = groupMap[groupKey];
-    const count = group.items.length;
-
-    if (count < collapseThreshold) {
-      for (const item of group.items) {
-        out += `- [ ] **${prefix}**：${item.full}\n`;
-      }
-    } else {
-      out += `- **${prefix}（共 ${count} 处）**：${group.title}：\n`;
-      const visibleItems = group.items.slice(0, collapseThreshold);
-      const collapsedItems = group.items.slice(collapseThreshold);
-
-      for (const item of visibleItems) {
-        out += `  - ${item.snippet}\n`;
-      }
-      if (collapsedItems.length > 0) {
-        out += `  <details>\n`;
-        out += `  <summary>展开查看剩余 ${collapsedItems.length} 处</summary>\n\n`;
-        for (const item of collapsedItems) {
-          out += `  - ${item.snippet}\n`;
-        }
-        out += `  </details>\n`;
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * 自动修复缺失 .txt 后缀的文件
- */
-export function autoFixMissingTxtExtensions(dirPath) {
-  const fixedFiles = [];
-  if (!fs.existsSync(dirPath)) return fixedFiles;
-
-  const entries = fs.readdirSync(dirPath);
-  for (const entry of entries) {
-    if (entry.startsWith('.') || entry.endsWith('.json')) continue;
-    const fullPath = path.join(dirPath, entry);
-    if (!fs.statSync(fullPath).isFile()) continue;
-
-    if (!entry.endsWith('.txt')) {
-      const targetPath = `${fullPath}.txt`;
-      fs.renameSync(fullPath, targetPath);
-      fixedFiles.push({ oldName: entry, newName: `${entry}.txt` });
-    }
-  }
-  return fixedFiles;
-}
-
-/**
  * 生成 Markdown 审查报告
  */
 export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMain = true) {
@@ -662,33 +605,130 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
   if (autoFixedList.length > 0) {
     md += `> [!NOTE]\n`;
-    md += `> **自动修复记录**：\n`;
+    md += `> **自动修复记录**：\n>\n`;
     for (const item of autoFixedList) {
       md += `> - 检测到文件 \`${item.oldName}\` 缺少 \`.txt\` 后缀，已自动补充并重命名为 \`${item.newName}\`。\n`;
     }
     md += `\n`;
   }
 
+  // 目录生成
+  md += `### 目录\n\n`;
+  for (const report of reports) {
+    const fileAnchor = `文件${report.file.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')}`;
+    md += `- [文件：\`${report.file}\`](#${fileAnchor})\n`;
+    if (report.errors.length > 0) {
+      md += `  - [阻断性错误](#阻断性错误)\n`;
+    }
+    if (report.warnings.length > 0) {
+      md += `  - [格式与体验建议](#格式与体验建议)\n`;
+    }
+    md += `  - [优化版本参考](#优化版本参考)\n`;
+    md += `    - [1. 仅修复阻断性错误版本](#1-仅修复阻断性错误版本)\n`;
+    md += `    - [2. 体验最佳推荐版本](#2-体验最佳推荐版本)\n`;
+  }
+  md += `\n`;
+
   let totalErrors = 0;
   let totalWarnings = 0;
+
+  const ORDERED_WARNING_KEYS = [
+    'unequal_equal_parts',
+    'date_format',
+    'person_colon',
+    'unquoted_punctuation',
+    'whole_line_quoted',
+    'inline_comment',
+    'duplicate_term',
+    'metadata_format',
+    'forbidden_term_sep',
+    'trailing_comma'
+  ];
+
+  const ORDERED_ERROR_KEYS = [
+    'missing_separator',
+    'slash_in_key',
+    'unquoted_apostrophe',
+    'file_ext',
+    'missing_version',
+    'missing_maintainer',
+    'version_not_bumped',
+    'missing_section',
+    'regex_missing_sep',
+    'regex_empty_match',
+    'regex_redos',
+    'regex_syntax'
+  ];
 
   for (const report of reports) {
     totalErrors += report.errors.length;
     totalWarnings += report.warnings.length;
 
     md += `### 文件：\`${report.file}\`\n\n`;
-    md += `- **词条统计**：词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
+    md += `- **规则统计**：词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
 
+    // 阻断性错误
     if (report.errors.length > 0) {
-      md += `#### 阻断性错误\n`;
-      md += renderIssueGroups(report.errorGroups, '错误', 3);
-      md += `\n`;
+      md += `#### 阻断性错误\n\n`;
+      let errIdx = 1;
+      const sortedErrorKeys = Object.keys(report.errorGroups).sort((a, b) => {
+        const ia = ORDERED_ERROR_KEYS.indexOf(a);
+        const ib = ORDERED_ERROR_KEYS.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+
+      for (const key of sortedErrorKeys) {
+        const group = report.errorGroups[key];
+        const countStr = `（共 ${group.items.length} 处）`;
+        let titleStr = group.title;
+        if (!titleStr.includes('（共')) {
+          titleStr = `${titleStr}${countStr}`;
+        }
+        if (!titleStr.endsWith('：') && !titleStr.endsWith(':')) {
+          titleStr += '：';
+        }
+
+        md += `${errIdx}. ${titleStr}\n\n`;
+        md += '```text\n';
+        md += group.items.join('\n') + '\n';
+        md += '```\n\n';
+        errIdx++;
+      }
     }
 
+    // 格式与体验建议
     if (report.warnings.length > 0) {
-      md += `#### 格式与体验建议\n`;
-      md += renderIssueGroups(report.warningGroups, '建议', 3);
-      md += `\n`;
+      md += `#### 格式与体验建议\n\n`;
+      let warnIdx = 1;
+      const sortedWarningKeys = Object.keys(report.warningGroups).sort((a, b) => {
+        const ia = ORDERED_WARNING_KEYS.indexOf(a);
+        const ib = ORDERED_WARNING_KEYS.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+
+      for (const key of sortedWarningKeys) {
+        const group = report.warningGroups[key];
+        let titleStr = group.title;
+        const countStr = key === 'duplicate_term' ? `（共 ${group.items.length} 条）` : `（共 ${group.items.length} 处）`;
+        
+        if (!titleStr.includes('（共')) {
+          if (titleStr.includes('。')) {
+            const dotIdx = titleStr.indexOf('。');
+            titleStr = `${titleStr.substring(0, dotIdx)}${countStr}。${titleStr.substring(dotIdx + 1)}`;
+          } else {
+            titleStr = `${titleStr}${countStr}`;
+          }
+        }
+        if (!titleStr.endsWith('：') && !titleStr.endsWith(':') && !titleStr.endsWith('。')) {
+          titleStr += '：';
+        }
+
+        md += `${warnIdx}. ${titleStr}\n\n`;
+        md += '```text\n';
+        md += group.items.join('\n') + '\n';
+        md += '```\n\n';
+        warnIdx++;
+      }
     }
 
     if (report.errors.length === 0 && report.warnings.length === 0) {
@@ -696,45 +736,47 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
       md += `> 该术语表编写极其规范，未发现任何格式语法问题，符合 AOT 客户端解析标准！\n\n`;
     }
 
-    // 生成两种意愿的修复版全文
+    // 优化版本参考
     if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
       const fixedMinimal = generateFixedGlossary(report.rawContent, 'minimal');
       const fixedRecommended = generateFixedGlossary(report.rawContent, 'recommended');
 
       md += `---\n\n`;
-      md += `### 🛠️ 修复版本参考（可按需选择复制）\n\n`;
-      md += `<details>\n`;
-      md += `<summary>📋 <b>意愿一：【仅修复阻断性错误版本】</b>（点击展开查看代码）</summary>\n\n`;
+      md += `### 优化版本参考\n\n`;
+      md += `#### 1. 仅修复阻断性错误版本\n\n`;
       md += `> [!TIP]\n`;
-      md += `> 该版本仅修复导致 CI 审查失败的阻断性错误（如补齐缺失分隔符、拆分斜杠同义词、转义单引号等），**完全保留作者原有的冒号匹配习惯、注释与格式**，复制后覆盖原文件即可立即通过 CI 审查。\n\n`;
+      md += `> 该版本仅修复阻断性错误：补齐缺失分隔符、拆分斜杠同义词、转义引号等，保留维护者原有的冒号匹配习惯、注释与格式。\n\n`;
       md += '```text\n';
       md += fixedMinimal.trim() + '\n';
       md += '```\n\n';
-      md += `</details>\n\n`;
 
-      md += `<details>\n`;
-      md += `<summary>✨ <b>意愿二：【体验最佳推荐版本】</b>（点击展开查看代码）</summary>\n\n`;
+      md += `#### 2. 体验最佳推荐版本\n\n`;
       md += `> [!TIP]\n`;
-      md += `> 该版本在意愿一的基础上，进一步完成了：\n`;
-      md += `> 1. 将符合「名+姓」结构的人名规则升级为等号（\`=\`）语法，使读者在小说正文中看到单独名或姓时也能自动翻译；\n`;
-      md += `> 2. 为含标点/连字符的词条包裹半角双引号，开启精准匹配；\n`;
+      md += `> 该版本在版本 1 的基础上，进一步完成了：\n`;
+      md += `> 1. 将符合「名+姓」结构的人名规则升级为 \`=\` 语法，使单独名、姓也能自动翻译；\n`;
+      md += `> 2. 为含标点的原文词条包裹引号，开启精准匹配；\n`;
       md += `> 3. 将行尾 \`//\` 注释自动提取为独立行注释，避免注释混入正文替换；\n`;
       md += `> 4. 标准化更新时间为 \`YYYY-MM-DD\` 格式；\n`;
-      md += `> 5. 自动注释去重重复词条。\n\n`;
+      md += `> 5. 去除重复规则。\n\n`;
       md += '```text\n';
       md += fixedRecommended.trim() + '\n';
       md += '```\n\n';
-      md += `</details>\n\n`;
     }
   }
 
   if (!isHeadBranchMain) {
     md += `---\n\n`;
-    md += `### 维护者贴心提示：\n`;
-    md += `检测到本次 PR 的源分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
+    md += `> [!TIP]\n`;
+    md += `> 检测到本次 PR 的源分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
   }
 
-  md += `\n<!-- aria-glossary-review -->\n`;
+  // 避免超过 GitHub 评论 65536 字符限制
+  if (md.length > 60000) {
+    md = md.substring(0, 59500) + '\n\n> [!WARNING]\n> 报告内容过长，部分内容已截断。\n\n<!-- aria-glossary-review -->\n';
+  } else {
+    md += `\n<!-- aria-glossary-review -->\n`;
+  }
+
   return { markdown: md, totalErrors, totalWarnings };
 }
 
