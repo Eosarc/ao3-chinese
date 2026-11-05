@@ -575,11 +575,13 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
           addIssue(fileReport.warningGroups, fileReport.warnings, 'unequal_equal_parts', '规则原文部分数与译文部分数不一致', rawLine.trim());
         }
       } else {
-        // 使用冒号但原文为人名多词
+        // 使用冒号但原文多词且译文多词（可能为姓名或其它复合专有名词）
         if (section.type === 'TERMS') {
+          const cleanVal = val.replace(/\/\/.*$/, '').trim();
           const parts = smartSplit(key, TERM_SEPARATOR_RE);
-          if (parts.length > 1 && (val.includes(' ') || val.includes('·'))) {
-            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '人名使用了 `:` 语法。建议改用 `=` 语法以支持单名、姓氏匹配。', rawLine.trim());
+          const valParts = smartSplit(cleanVal, TRANSLATION_SEPARATOR_RE);
+          if (parts.length > 1 && valParts.length > 1) {
+            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '复合专有名词使用了 `:` 语法。若为角色姓名，建议改用 `=` 语法以支持单名/姓氏拆分自动匹配。', rawLine.trim());
           }
         }
       }
@@ -601,7 +603,10 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
  * 生成 Markdown 审查报告
  */
 export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMain = true) {
-  let md = `## 在线术语表自动审查报告\n\n`;
+  const isSingle = reports.length === 1;
+  const singleBaseName = isSingle ? path.basename(reports[0].file, '.txt') : '';
+
+  let md = isSingle ? `## ${singleBaseName} - 自动审查报告\n\n` : `## 在线术语表自动审查报告\n\n`;
 
   if (autoFixedList.length > 0) {
     md += `> [!NOTE]\n`;
@@ -614,18 +619,43 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
   // 目录生成
   md += `### 目录\n\n`;
-  for (const report of reports) {
-    const fileAnchor = `文件${report.file.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')}`;
-    md += `- [文件：\`${report.file}\`](#${fileAnchor})\n`;
+  if (isSingle) {
+    const report = reports[0];
+    md += `- [规则统计](#user-content-规则统计)\n`;
     if (report.errors.length > 0) {
-      md += `  - [阻断性错误](#阻断性错误)\n`;
+      md += `- [阻断性错误](#user-content-阻断性错误)\n`;
     }
     if (report.warnings.length > 0) {
-      md += `  - [格式与体验建议](#格式与体验建议)\n`;
+      md += `- [格式与体验建议](#user-content-格式与体验建议)\n`;
     }
-    md += `  - [优化版本参考](#优化版本参考)\n`;
-    md += `    - [1. 仅修复阻断性错误版本](#1-仅修复阻断性错误版本)\n`;
-    md += `    - [2. 体验最佳推荐版本](#2-体验最佳推荐版本)\n`;
+    if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
+      md += `- [优化版本参考](#user-content-优化版本参考)\n`;
+      md += `  - [1. 基础修复版](#user-content-1-基础修复版)\n`;
+      md += `  - [2. 体验最佳版](#user-content-2-体验最佳版)\n`;
+    }
+    if (!isHeadBranchMain) {
+      md += `- [分支更新建议](#user-content-分支更新建议)\n`;
+    }
+  } else {
+    for (const report of reports) {
+      const fileSlug = report.file.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
+      md += `- [文件：\`${report.file}\`](#user-content-文件${fileSlug})\n`;
+      md += `  - [规则统计](#user-content-${fileSlug}-规则统计)\n`;
+      if (report.errors.length > 0) {
+        md += `  - [阻断性错误](#user-content-${fileSlug}-阻断性错误)\n`;
+      }
+      if (report.warnings.length > 0) {
+        md += `  - [格式与体验建议](#user-content-${fileSlug}-格式与体验建议)\n`;
+      }
+      if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
+        md += `  - [优化版本参考](#user-content-${fileSlug}-优化版本参考)\n`;
+        md += `    - [1. 基础修复版](#user-content-${fileSlug}-1-基础修复版)\n`;
+        md += `    - [2. 体验最佳版](#user-content-${fileSlug}-2-体验最佳版)\n`;
+      }
+    }
+    if (!isHeadBranchMain) {
+      md += `- [分支更新建议](#user-content-分支更新建议)\n`;
+    }
   }
   md += `\n`;
 
@@ -664,12 +694,19 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     totalErrors += report.errors.length;
     totalWarnings += report.warnings.length;
 
-    md += `### 文件：\`${report.file}\`\n\n`;
-    md += `- **规则统计**：词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
+    const fileSlug = report.file.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
+
+    if (!isSingle) {
+      md += `### 文件：\`${report.file}\`\n\n`;
+      md += `#### <a id="${fileSlug}-规则统计"></a>规则统计\n\n`;
+    } else {
+      md += `### 规则统计\n\n`;
+    }
+    md += `词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
 
     // 阻断性错误
     if (report.errors.length > 0) {
-      md += `#### 阻断性错误\n\n`;
+      md += isSingle ? `### 阻断性错误\n\n` : `#### <a id="${fileSlug}-阻断性错误"></a>阻断性错误\n\n`;
       let errIdx = 1;
       const sortedErrorKeys = Object.keys(report.errorGroups).sort((a, b) => {
         const ia = ORDERED_ERROR_KEYS.indexOf(a);
@@ -698,7 +735,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
     // 格式与体验建议
     if (report.warnings.length > 0) {
-      md += `#### 格式与体验建议\n\n`;
+      md += isSingle ? `### 格式与体验建议\n\n` : `#### <a id="${fileSlug}-格式与体验建议"></a>格式与体验建议\n\n`;
       let warnIdx = 1;
       const sortedWarningKeys = Object.keys(report.warningGroups).sort((a, b) => {
         const ia = ORDERED_WARNING_KEYS.indexOf(a);
@@ -742,21 +779,21 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
       const fixedRecommended = generateFixedGlossary(report.rawContent, 'recommended');
 
       md += `---\n\n`;
-      md += `### 优化版本参考\n\n`;
-      md += `#### 1. 仅修复阻断性错误版本\n\n`;
+      md += isSingle ? `### 优化版本参考\n\n` : `#### <a id="${fileSlug}-优化版本参考"></a>优化版本参考\n\n`;
+      md += isSingle ? `#### 1. 基础修复版\n\n` : `##### 1. 基础修复版\n\n`;
       md += `> [!TIP]\n`;
       md += `> 该版本仅修复阻断性错误：补齐缺失分隔符、拆分斜杠同义词、转义引号等，保留维护者原有的冒号匹配习惯、注释与格式。\n\n`;
       md += '```text\n';
       md += fixedMinimal.trim() + '\n';
       md += '```\n\n';
 
-      md += `#### 2. 体验最佳推荐版本\n\n`;
+      md += isSingle ? `#### 2. 体验最佳版\n\n` : `##### 2. 体验最佳版\n\n`;
       md += `> [!TIP]\n`;
-      md += `> 该版本在版本 1 的基础上，进一步完成了：\n`;
-      md += `> 1. 将符合「名+姓」结构的人名规则升级为 \`=\` 语法，使单独名、姓也能自动翻译；\n`;
-      md += `> 2. 为含标点的原文词条包裹引号，开启精准匹配；\n`;
-      md += `> 3. 将行尾 \`//\` 注释自动提取为独立行注释，避免注释混入正文替换；\n`;
-      md += `> 4. 标准化更新时间为 \`YYYY-MM-DD\` 格式；\n`;
+      md += `> 该版本在版本 1 的基础上，进一步完成了：<br>\n`;
+      md += `> 1. 将符合「名+姓」结构的人名规则升级为 \`=\` 语法，使单独名、姓也能自动翻译；<br>\n`;
+      md += `> 2. 为含标点的原文词条包裹引号，开启精准匹配；<br>\n`;
+      md += `> 3. 将行尾 \`//\` 注释自动提取为独立行注释，避免注释混入正文替换；<br>\n`;
+      md += `> 4. 标准化更新时间为 \`YYYY-MM-DD\` 格式；<br>\n`;
       md += `> 5. 去除重复规则。\n\n`;
       md += '```text\n';
       md += fixedRecommended.trim() + '\n';
@@ -766,6 +803,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
   if (!isHeadBranchMain) {
     md += `---\n\n`;
+    md += `### 分支更新建议\n\n`;
     md += `> [!TIP]\n`;
     md += `> 检测到本次 PR 的源分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
   }
