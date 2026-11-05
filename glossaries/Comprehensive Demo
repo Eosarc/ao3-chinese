@@ -3,7 +3,6 @@
 更新时间：04-11-2026
 
 词条:
-// 1. 冒号人名建议 (8条，展示前3条并折叠剩余5条)
 Shane Hollander: 谢恩 霍兰德
 Ilya Rozanov: 伊利亚 罗扎诺夫
 Rachel Rozanov: 雷切尔 罗扎诺娃
@@ -13,7 +12,6 @@ Elena Petrova: 叶莲娜 佩特罗娃
 Dmitry Sokolov: 德米特里 索科洛夫
 Mikhail Volkov: 米哈伊尔 沃尔科夫
 
-// 2. 标点与连字符未加引号建议 (6条，展示前3条并折叠剩余3条)
 Spider-Man: 蜘蛛侠
 X-Men: X战警
 Jean-Luc: 让-吕克
@@ -21,33 +19,26 @@ Mary-Jane: 玛丽-简
 T-800: 终结者
 Wall-E: 瓦力
 
-// 3. 缺失分隔符错误 (阻断性错误，4条，展示前3条并折叠剩余1条)
 Boston Bears 波士顿 熊队
 Toronto Titans 多伦多 泰坦队
 Montreal Canadiens 蒙特利尔 加拿大人队
 New York Rangers 纽约 游骑兵队
 
-// 4. 原文含斜杠错误 (阻断性错误，3条)
 Goalie / Goaltender: 守门员
 Center / Central Forward: 中锋
 Defenseman / Defenceman: 后卫
 
-// 5. 撇号未加双引号 (阻断性错误，3条)
 Girls' Academy: 女子学园
 Collector's Edition: 典藏版
 Men's League: 男子联赛
 
-// 6. 整行被引号包裹
 "Wayne Gretzky: 韦恩 格雷茨基"
 
-// 7. 等号两侧分段数不匹配 (阻断性错误，单条)
 Connor McDavid = 康纳
 
-// 8. 词条含行尾注释 (2条)
 Stanley Cup: 斯坦利杯 // 北美冰球最高荣誉
 Hart Trophy: 哈特纪念奖 // 常规赛最有价值球员
 
-// 9. 重复词条定义 (2条)
 Spider-Man: 小蜘蛛
 Wall-E: 机器人瓦力
 
