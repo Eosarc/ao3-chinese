@@ -222,7 +222,18 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
       continue;
     }
 
-    if (inSection === 'FORBIDDEN_TERMS' || inSection === 'REGEX_TERMS') {
+    if (inSection === 'FORBIDDEN_TERMS') {
+      const cleanForbidden = rawLine.replace(/[,，]$/, '').trim();
+      const sepMatch = cleanForbidden.match(/^([^:=：＝]+)\s*[:=：＝].*$/);
+      if (sepMatch) {
+        result.push(sepMatch[1].trim());
+      } else {
+        result.push(cleanForbidden);
+      }
+      continue;
+    }
+
+    if (inSection === 'REGEX_TERMS') {
       result.push(rawLine.replace(/[,，]$/, ''));
       continue;
     }
@@ -488,7 +499,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       // 检查行尾多余逗号
       if (/[,，]$/.test(line)) {
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'trailing_comma', '行末含有多余逗号', rawLine.trim());
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'trailing_comma', '规则末尾包含多余逗号。建议去除。', rawLine.trim());
       }
 
       const cleanLine = line.replace(/[,，]$/, '');
@@ -496,7 +507,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       if (section.type === 'FORBIDDEN_TERMS') {
         fileReport.stats.forbiddenTerms++;
         if (cleanLine.includes(':') || cleanLine.includes('：') || cleanLine.includes('=')) {
-          addIssue(fileReport.warningGroups, fileReport.warnings, 'forbidden_term_sep', '禁翻词条包含了分隔符或译文', rawLine.trim());
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'forbidden_term_sep', '禁翻词条包含了分隔符或译文。禁翻词条仅需填写不希望翻译的原文本身。', rawLine.trim());
         }
         continue;
       }
