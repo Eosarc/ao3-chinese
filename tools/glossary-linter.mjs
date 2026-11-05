@@ -685,6 +685,19 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     'duplicate_term'
   ];
 
+  const WARNING_FIX_DESCRIPTIONS = {
+    unequal_equal_parts: '将分段数不对等的等号规则降级为冒号，确保词条能被正常匹配；',
+    date_format: '标准化更新时间为 ISO 8601 (`YYYY-MM-DD`) 格式；',
+    person_colon: '将符合复合专有名词结构的规则升级为 `=` 语法，使单独名、姓也能自动翻译；',
+    unquoted_punctuation: '为含标点符号的原文词条包裹双引号，开启精准匹配；',
+    whole_line_quoted: '修正整行包裹引号的问题，使引号仅精准包裹原文词条；',
+    trailing_comma: '清除规则末尾残留的逗号；',
+    inline_comment: '将行尾 `//` 注释自动提取为独立行注释，避免注释混入正文替换；',
+    forbidden_term_sep: '净化禁翻词条，去除多余的分隔符与译文；',
+    metadata_format: '规范元数据属性书写格式；',
+    duplicate_term: '去除重复规则。'
+  };
+
   const ORDERED_ERROR_KEYS = [
     'missing_separator',
     'slash_in_key',
@@ -799,12 +812,27 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
       md += isSingle ? `#### 2. 体验最佳版\n\n` : `##### 2. 体验最佳版\n\n`;
       md += `> [!TIP]\n`;
-      md += `> 该版本在版本 1 的基础上，进一步完成了：\n`;
-      md += `> 1. 将符合复合专有名词结构的规则升级为 \`=\` 语法，使单独名、姓也能自动翻译；\n`;
-      md += `> 2. 为含标点的原文词条包裹引号，开启精准匹配；\n`;
-      md += `> 3. 将行尾 \`//\` 注释自动提取为独立行注释，避免注释混入正文替换；\n`;
-      md += `> 4. 标准化更新时间为 \`YYYY-MM-DD\` 格式；\n`;
-      md += `> 5. 去除重复规则。\n\n`;
+
+      const activeFixes = [];
+      for (const wKey of ORDERED_WARNING_KEYS) {
+        if (report.warningGroups[wKey] && WARNING_FIX_DESCRIPTIONS[wKey]) {
+          activeFixes.push(WARNING_FIX_DESCRIPTIONS[wKey]);
+        }
+      }
+
+      if (activeFixes.length > 0) {
+        md += `> 该版本在版本 1 的基础上，进一步完成了：\n`;
+        activeFixes.forEach((fixText, idx) => {
+          let text = fixText;
+          if (idx === activeFixes.length - 1 && text.endsWith('；')) {
+            text = text.slice(0, -1) + '。';
+          }
+          md += `> ${idx + 1}. ${text}\n`;
+        });
+        md += `\n`;
+      } else {
+        md += `> 该版本在版本 1 的基础上，进一步规范了词条排版与格式排布。\n\n`;
+      }
       md += '```text\n';
       md += fixedRecommended.trim() + '\n';
       md += '```\n\n';
