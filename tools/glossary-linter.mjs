@@ -180,8 +180,86 @@ export function smartSplit(str, regex) {
 export function generateFixedGlossary(rawContent, mode = 'minimal') {
   const lines = rawContent.split(/\r?\n/);
   const result = [];
-  const seenKeys = new Set();
   let inSection = '';
+
+  // 在 recommended 模式下，预先分析所有词条，确定哪些行保留、哪些行剔除
+  const keptLineIndices = new Set();
+  const termLineIndices = new Set();
+
+  if (mode === 'recommended') {
+    let currentSec = '';
+    const keyOccurrences = new Map(); // lowerKey -> Array<{ lineIndex, normVal }>
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineTrim = lines[i].trim();
+      if (!lineTrim || lineTrim.startsWith('//')) continue;
+
+      const cleanH = lineTrim.toLowerCase().replace(/[:：\s]*$/, '');
+      let isH = false;
+      for (const k in SECTION_HEADERS) {
+        if (SECTION_HEADERS[k].includes(cleanH)) {
+          currentSec = k;
+          isH = true;
+          break;
+        }
+      }
+      if (isH) continue;
+      if (currentSec !== 'TERMS' && currentSec !== 'GENERAL_TERMS') continue;
+
+      let wLine = lineTrim.replace(/[,，]$/, '');
+      if (wLine.includes('//') && !wLine.startsWith('//')) {
+        wLine = wLine.substring(0, wLine.indexOf('//')).trim();
+      }
+      const wholeQ = isWholeLineQuotedWithSeparator(wLine);
+      if (wholeQ) {
+        wLine = `${wholeQ.key}：${wholeQ.value}`;
+      }
+      let parsed = parseGlossaryKeyValuePair(wLine);
+      if (!parsed) {
+        if (wLine.includes("'") || wLine.includes('‘')) {
+          const cIdx = wLine.indexOf('：') !== -1 ? wLine.indexOf('：') : wLine.indexOf(':');
+          const eIdx = wLine.indexOf('=') !== -1 ? wLine.indexOf('=') : wLine.indexOf('＝');
+          const sepIdx = cIdx !== -1 ? cIdx : eIdx;
+          if (sepIdx !== -1) {
+            wLine = `"${wLine.substring(0, sepIdx).trim()}"${wLine[sepIdx]}${wLine.substring(sepIdx + 1).trim()}`;
+            parsed = parseGlossaryKeyValuePair(wLine);
+          }
+        }
+        if (!parsed) {
+          const matchB = wLine.match(/^([A-Za-z0-9\s.'"-]+?)\s+([\u4e00-\u9fa5\u3040-\u30ff\u0400-\u04ff].*)$/);
+          if (matchB) {
+            wLine = `${matchB[1].trim()}：${matchB[2].trim()}`;
+            parsed = parseGlossaryKeyValuePair(wLine);
+          }
+        }
+      }
+
+      if (parsed) {
+        const k = parsed.key.trim().replace(/^["“]|["”]$/g, '').toLowerCase();
+        const v = parsed.value.trim().replace(/\/\/.*$/, '').replace(/[,，]$/, '').trim().toLowerCase();
+        termLineIndices.add(i);
+        if (!keyOccurrences.has(k)) {
+          keyOccurrences.set(k, []);
+        }
+        keyOccurrences.get(k).push({ lineIndex: i, normVal: v });
+      }
+    }
+
+    for (const [k, occs] of keyOccurrences.entries()) {
+      if (occs.length === 1) {
+        keptLineIndices.add(occs[0].lineIndex);
+      } else {
+        const distinctVals = new Set(occs.map(o => o.normVal));
+        if (distinctVals.size === 1) {
+          // 完全相同的重复：默认保留首次出现的规则
+          keptLineIndices.add(occs[0].lineIndex);
+        } else {
+          // 相同原文不同译文的重复：默认保留最后出现的规则
+          keptLineIndices.add(occs[occs.length - 1].lineIndex);
+        }
+      }
+    }
+  }
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
@@ -208,6 +286,11 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
       }
     }
     if (isHeader) continue;
+
+    // 在 recommended 模式下，检查是否为需要剔除的冲突/重复行
+    if (mode === 'recommended' && termLineIndices.has(i) && !keptLineIndices.has(i)) {
+      continue;
+    }
 
     // 元数据区
     if (!inSection) {
@@ -338,13 +421,6 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
             finalSep = ' = ';
           }
         }
-
-        // 去除重复规则（直接略过，不生成额外注释）
-        const lowerKey = finalKey.toLowerCase();
-        if (seenKeys.has(lowerKey)) {
-          continue;
-        }
-        seenKeys.add(lowerKey);
 
         // 行尾注释提取到前一行
         if (inlineComment) {
@@ -479,7 +555,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
   }
 
   // 5. 逐行解析审查各分区词条
-  const seenKeys = new Map();
+  const termEntriesByKey = new Map();
 
   for (let s = 0; s < sections.length; s++) {
     const section = sections[s];
@@ -597,12 +673,57 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
         }
       }
 
-      // 检查重复词条
+      // 记录词条，用于后续冲突与完全重复分析
       const lowerKey = key.toLowerCase();
-      if (seenKeys.has(lowerKey)) {
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'duplicate_term', '存在重复规则。建议移除。', rawLine.trim());
+      const cleanVal = val.replace(/\/\/.*$/, '').replace(/[,，]$/, '').trim();
+      if (!termEntriesByKey.has(lowerKey)) {
+        termEntriesByKey.set(lowerKey, []);
+      }
+      termEntriesByKey.get(lowerKey).push({
+        lineNo,
+        rawLine: rawLine.trim(),
+        key,
+        cleanVal,
+        sep: parsed.separator
+      });
+    }
+  }
+
+  // 审查同一原文不同译文与完全重复规则
+  for (const [lowerKey, entries] of termEntriesByKey.entries()) {
+    if (entries.length <= 1) continue;
+
+    const distinctVals = new Set(entries.map(e => e.cleanVal.toLowerCase()));
+
+    if (distinctVals.size > 1) {
+      // 1. 同一原文词条存在不同译文
+      const groupLines = entries.map(e => {
+        return e.rawLine.replace(/\/\/.*$/, '').replace(/[,，]$/, '').trim();
+      });
+      const uniqueGroupLines = [...new Set(groupLines)];
+      addIssue(
+        fileReport.warningGroups,
+        fileReport.warnings,
+        'conflicting_translation',
+        '同一原文词条存在不同译文。建议确认并统一。',
+        uniqueGroupLines.join('\n')
+      );
+    }
+
+    // 2. 存在完全相同的冗余规则
+    const seenRuleStrings = new Set();
+    for (const e of entries) {
+      const normRule = `${e.key.toLowerCase()}::${e.sep}::${e.cleanVal.toLowerCase()}`;
+      if (seenRuleStrings.has(normRule)) {
+        addIssue(
+          fileReport.warningGroups,
+          fileReport.warnings,
+          'duplicate_term',
+          '存在完全相同的冗余规则。建议移除。',
+          e.rawLine
+        );
       } else {
-        seenKeys.set(lowerKey, lineNo);
+        seenRuleStrings.add(normRule);
       }
     }
   }
@@ -682,6 +803,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     'inline_comment',
     'forbidden_term_sep',
     'metadata_format',
+    'conflicting_translation',
     'duplicate_term'
   ];
 
@@ -695,7 +817,8 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     inline_comment: '将行尾 `//` 注释自动提取为独立行注释，避免注释混入正文替换；',
     forbidden_term_sep: '净化禁翻词条，去除多余的分隔符与译文；',
     metadata_format: '规范元数据属性书写格式；',
-    duplicate_term: '去除重复规则。'
+    conflicting_translation: '解决同一原文的译文冲突（默认保留最后出现的规则）；',
+    duplicate_term: '移除完全相同的冗余规则（默认保留首次出现的规则）；'
   };
 
   const ORDERED_ERROR_KEYS = [
@@ -785,7 +908,11 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 
         md += `${warnIdx}. ${titleStr}\n\n`;
         md += '```text\n';
-        md += group.items.join('\n') + '\n';
+        if (key === 'conflicting_translation') {
+          md += group.items.join('\n\n') + '\n';
+        } else {
+          md += group.items.join('\n') + '\n';
+        }
         md += '```\n\n';
         warnIdx++;
       }
