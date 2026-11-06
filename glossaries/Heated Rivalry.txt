@@ -14,7 +14,7 @@ Elena Petrova: 叶莲娜 佩特罗娃
 Dmitry Sokolov: 德米特里 索科洛夫
 Mikhail Volkov: 米哈伊尔 沃尔科夫
 
-// 特别连字符豁免测试
+// 角色调侃与流行文化借代
 Spider-Man: 蜘蛛侠
 X-Men: X战警
 Jean-Luc: 让-吕克

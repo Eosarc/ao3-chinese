@@ -583,7 +583,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
         const keyParts = smartSplit(key.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
         const valParts = smartSplit(val.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
         if (keyParts.length > 1 && keyParts.length !== valParts.length) {
-          addIssue(fileReport.warningGroups, fileReport.warnings, 'unequal_equal_parts', '`=` 规则原文部分数与译文部分数不一致。建议检查。', rawLine.trim());
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'unequal_equal_parts', '`=` 语法规则原文部分数与译文部分数不一致。建议检查。', rawLine.trim());
         }
       } else {
         // 使用冒号但原文多词且译文多词（可能为姓名或其它复合专有名词）
@@ -600,7 +600,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       // 检查重复词条
       const lowerKey = key.toLowerCase();
       if (seenKeys.has(lowerKey)) {
-        addIssue(fileReport.warningGroups, fileReport.warnings, 'duplicate_term', '存在重复规则', rawLine.trim());
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'duplicate_term', '存在重复规则。建议移除。', rawLine.trim());
       } else {
         seenKeys.set(lowerKey, lineNo);
       }
