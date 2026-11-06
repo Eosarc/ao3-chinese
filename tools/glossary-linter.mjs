@@ -762,8 +762,8 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     }
     if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
       md += `- 优化版本参考\n`;
-      md += `  - 1. 基础修复版\n`;
-      md += `  - 2. 体验最佳版\n`;
+      md += `  - 1\\. 基础修复版\n`;
+      md += `  - 2\\. 体验最佳版\n`;
     }
     if (!isHeadBranchMain) {
       md += `- 分支更新建议\n`;
@@ -780,8 +780,8 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
       }
       if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
         md += `  - 优化版本参考\n`;
-        md += `    - 1. 基础修复版\n`;
-        md += `    - 2. 体验最佳版\n`;
+        md += `    - 1\\. 基础修复版\n`;
+        md += `    - 2\\. 体验最佳版\n`;
       }
     }
     if (!isHeadBranchMain) {
@@ -808,7 +808,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
   ];
 
   const WARNING_FIX_DESCRIPTIONS = {
-    unequal_equal_parts: '将分段数不对等的等号规则降级为冒号，确保词条能被正常匹配；',
+    unequal_equal_parts: '将分段数不对等的 `=` 语法规则修改为 `:`；',
     date_format: '标准化更新时间为 ISO 8601 (`YYYY-MM-DD`) 格式；',
     person_colon: '将符合复合专有名词结构的规则升级为 `=` 语法，使单独名、姓也能自动翻译；',
     unquoted_punctuation: '为含标点符号的原文词条包裹双引号，开启精准匹配；',
