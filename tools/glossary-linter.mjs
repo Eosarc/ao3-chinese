@@ -970,7 +970,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     md += `---\n\n`;
     md += `### 分支更新建议\n\n`;
     md += `> [!TIP]\n`;
-    md += `> 检测到本次 PR 的源分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
+    md += `> 检测到当前分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行保存与更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
   }
 
   // 避免超过 GitHub 评论 65536 字符限制
@@ -984,7 +984,12 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
 }
 
 // CLI 执行入口
-const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const isMainModule = Boolean(
+  process.argv[1] && (
+    path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) ||
+    (fs.existsSync(process.argv[1]) && fs.existsSync(fileURLToPath(import.meta.url)) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)))
+  )
+);
 if (isMainModule) {
   const args = process.argv.slice(2);
   let shouldFix = args.includes('--fix');

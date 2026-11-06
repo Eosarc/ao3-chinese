@@ -1,6 +1,9 @@
 name: 在线术语表审查与 Wiki 同步
 
 on:
+  push:
+    paths:
+      - 'glossaries/**'
   pull_request_target:
     types: [opened, synchronize, reopened, closed]
     paths:
@@ -13,8 +16,8 @@ permissions:
 
 jobs:
   lint-and-review:
-    name: 在线术语表智能审查
-    if: github.event.action != 'closed'
+    name: 在线术语表智能审查 (PR)
+    if: github.event_name == 'pull_request_target' && github.event.action != 'closed'
     runs-on: ubuntu-latest
 
     steps:
@@ -116,6 +119,34 @@ jobs:
             git push origin HEAD:${{ github.event.pull_request.head.ref }} || true
           fi
 
+      - name: 获取最新 Aria 质检引擎
+        if: steps.get_changed.outputs.files_json != '[]'
+        run: |
+          mkdir -p /tmp/aria-engine
+          LINTER_FETCHED=false
+          UPSTREAM_CANDIDATES=("Oarcr/ao3-chinese" "V-Lipset/ao3-chinese")
+          for repo in "${UPSTREAM_CANDIDATES[@]}"; do
+            echo "尝试从 $repo 获取最新 glossary-linter.mjs..."
+            if curl -sSfL "https://raw.githubusercontent.com/$repo/main/tools/glossary-linter.mjs" -o /tmp/aria-engine/glossary-linter.mjs; then
+              if [ -s /tmp/aria-engine/glossary-linter.mjs ]; then
+                echo "✅ 成功从 $repo 获取最新质检引擎！"
+                LINTER_FETCHED=true
+                break
+              fi
+            fi
+          done
+
+          if [ "$LINTER_FETCHED" != "true" ]; then
+            echo "⚠️ 动态拉取失败，尝试使用 base_repo 内置的 tools/glossary-linter.mjs 兜底..."
+            if [ -f base_repo/tools/glossary-linter.mjs ]; then
+              cp base_repo/tools/glossary-linter.mjs /tmp/aria-engine/glossary-linter.mjs
+              echo "✅ 已使用 base_repo/tools/glossary-linter.mjs"
+            else
+              echo "❌ 未找到可用质检引擎！"
+              exit 1
+            fi
+          fi
+
       - name: 运行术语表质检脚本
         id: aria_linter
         if: steps.get_changed.outputs.files_json != '[]'
@@ -124,7 +155,6 @@ jobs:
           FILES_JSON: ${{ steps.get_changed.outputs.files_json }}
         run: |
           cd pr_repo
-          cp ../base_repo/tools/glossary-linter.mjs tools/glossary-linter.mjs
           CODE=0
           node -e '
             import { spawnSync } from "node:child_process";
@@ -136,7 +166,7 @@ jobs:
               else if (fs.existsSync(f + ".txt")) targets.push(f + ".txt");
             }
             console.log("质检目标文件:", targets);
-            const args = ["tools/glossary-linter.mjs", "--head-branch", "${{ github.event.pull_request.head.ref }}", ...targets];
+            const args = ["/tmp/aria-engine/glossary-linter.mjs", "--head-branch", "${{ github.event.pull_request.head.ref }}", ...targets];
             const proc = spawnSync("node", args, { encoding: "utf-8" });
             fs.writeFileSync("linter_report.md", proc.stdout || "");
             if (proc.stderr) console.error(proc.stderr);
@@ -144,6 +174,13 @@ jobs:
           ' || CODE=$?
           echo "LINTER_EXIT_CODE=$CODE" >> $GITHUB_ENV
           rm -f .auto_fixed_files.json
+
+      - name: 输出报告至 Job Summary
+        if: steps.get_changed.outputs.files_json != '[]'
+        run: |
+          if [ -f pr_repo/linter_report.md ]; then
+            cat pr_repo/linter_report.md >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: 发布或原地更新审查评论
         if: steps.get_changed.outputs.files_json != '[]'
@@ -191,9 +228,199 @@ jobs:
             echo "✅ 术语表质检通过。"
           fi
 
+  push-review:
+    name: 在线术语表智能审查 (Push)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 获取最新 Aria 质检引擎
+        id: fetch_engine
+        run: |
+          mkdir -p /tmp/aria-engine
+          LINTER_FETCHED=false
+          UPSTREAM_CANDIDATES=("Oarcr/ao3-chinese" "V-Lipset/ao3-chinese")
+          for repo in "${UPSTREAM_CANDIDATES[@]}"; do
+            echo "尝试从 $repo 获取最新 glossary-linter.mjs..."
+            if curl -sSfL "https://raw.githubusercontent.com/$repo/main/tools/glossary-linter.mjs" -o /tmp/aria-engine/glossary-linter.mjs; then
+              if [ -s /tmp/aria-engine/glossary-linter.mjs ]; then
+                echo "✅ 成功从 $repo 获取最新质检引擎！"
+                LINTER_FETCHED=true
+                break
+              fi
+            fi
+          done
+
+          if [ "$LINTER_FETCHED" != "true" ]; then
+            echo "⚠️ 动态拉取失败，尝试使用本地内置的 tools/glossary-linter.mjs 兜底..."
+            if [ -f tools/glossary-linter.mjs ]; then
+              cp tools/glossary-linter.mjs /tmp/aria-engine/glossary-linter.mjs
+              echo "✅ 已使用本地 tools/glossary-linter.mjs"
+            else
+              echo "❌ 未找到可用质检引擎！"
+              exit 1
+            fi
+          fi
+
+      - name: 获取变动的术语表文件
+        id: get_changed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commitMsg = context.payload.head_commit?.message || '';
+            if (commitMsg.startsWith('Merge pull request') || commitMsg.startsWith('Merge branch') || commitMsg.startsWith('chore: 自动为在线术语表文件补充 .txt 后缀')) {
+              console.log('检测到合并或自动维护提交，无需触发独立 Push 审查。');
+              core.setOutput('skip', 'true');
+              core.setOutput('files_json', '[]');
+              return;
+            }
+
+            const commitFiles = new Set();
+            const commits = context.payload.commits || [];
+            for (const c of commits) {
+              for (const f of [...(c.added || []), ...(c.modified || [])]) {
+                commitFiles.add(f);
+              }
+            }
+
+            if (commitFiles.size === 0) {
+              try {
+                const { data: commitData } = await github.rest.repos.getCommit({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: context.sha,
+                });
+                for (const f of (commitData.files || [])) {
+                  if (f.status !== 'removed') commitFiles.add(f.filename);
+                }
+              } catch (e) {
+                console.warn('获取 commit 详情失败:', e.message);
+              }
+            }
+
+            const glossaryFiles = Array.from(commitFiles)
+              .filter(f => f.startsWith('glossaries/') && !f.endsWith('.json') && !f.startsWith('glossaries/.'));
+
+            core.setOutput('skip', glossaryFiles.length === 0 ? 'true' : 'false');
+            core.setOutput('files_json', JSON.stringify(glossaryFiles));
+            console.log('本次 Push 变动的术语表文件:', glossaryFiles);
+
+      - name: 自动修复缺失的 .txt 后缀
+        id: auto_fix
+        if: steps.get_changed.outputs.skip != 'true'
+        env:
+          FILES_JSON: ${{ steps.get_changed.outputs.files_json }}
+        run: |
+          node -e '
+            import fs from "node:fs";
+            import path from "node:path";
+            const files = JSON.parse(process.env.FILES_JSON || "[]");
+            let fixed = [];
+            for (const f of files) {
+              if (f.startsWith(".") || f.endsWith(".json") || f.endsWith(".txt")) continue;
+              if (fs.existsSync(f) && fs.statSync(f).isFile()) {
+                fs.renameSync(f, f + ".txt");
+                fixed.push(f);
+              }
+            }
+            if (fixed.length > 0) {
+              fs.writeFileSync(".auto_fixed_files.json", JSON.stringify(fixed));
+              console.log("Fixed files in push:", fixed);
+            }
+          '
+          if [ -f .auto_fixed_files.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add glossaries/
+            git commit -m "chore: 自动为在线术语表文件补充 .txt 后缀"
+            git push origin HEAD:${{ github.ref_name }} || true
+          fi
+
+      - name: 运行术语表质检脚本
+        if: steps.get_changed.outputs.skip != 'true'
+        id: aria_linter
+        continue-on-error: true
+        env:
+          FILES_JSON: ${{ steps.get_changed.outputs.files_json }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          CODE=0
+          node -e '
+            import { spawnSync } from "node:child_process";
+            import fs from "node:fs";
+            const files = JSON.parse(process.env.FILES_JSON || "[]");
+            const targets = [];
+            for (const f of files) {
+              if (fs.existsSync(f)) targets.push(f);
+              else if (fs.existsSync(f + ".txt")) targets.push(f + ".txt");
+            }
+            console.log("质检目标文件:", targets);
+            if (targets.length === 0) {
+              console.log("未找到待质检的文件。");
+              process.exit(0);
+            }
+            const args = ["/tmp/aria-engine/glossary-linter.mjs", "--head-branch", process.env.REF_NAME || "main", ...targets];
+            const proc = spawnSync("node", args, { encoding: "utf-8" });
+            fs.writeFileSync("linter_report.md", proc.stdout || "");
+            if (proc.stderr) console.error(proc.stderr);
+            process.exit(proc.status || 0);
+          ' || CODE=$?
+          echo "LINTER_EXIT_CODE=$CODE" >> $GITHUB_ENV
+          rm -f .auto_fixed_files.json
+
+      - name: 输出报告至 Job Summary
+        if: steps.get_changed.outputs.skip != 'true'
+        run: |
+          if [ -f linter_report.md ]; then
+            cat linter_report.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 发布 Commit 审查评论
+        if: steps.get_changed.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'linter_report.md';
+            if (!fs.existsSync(reportPath)) return;
+            const reportBody = fs.readFileSync(reportPath, 'utf-8');
+            if (!reportBody || !reportBody.trim()) return;
+
+            try {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: reportBody
+              });
+              console.log('✅ 审查评论已成功发表在提交 (Commit ' + context.sha.substring(0, 7) + ') 底部。');
+            } catch (err) {
+              console.warn('⚠️ 发表 Commit 评论失败（请确认仓库 Actions 具备 Contents: Write 权限）：', err.message);
+            }
+
+      - name: 判定质检状态
+        if: steps.get_changed.outputs.skip != 'true'
+        run: |
+          if [ "${{ env.LINTER_EXIT_CODE }}" != "0" ]; then
+            echo "❌ 检测到阻断性语法错误，请查看下方 Commit 评论或 Actions Summary 建议进行修改。"
+            exit 1
+          else
+            echo "✅ 术语表质检通过。"
+          fi
+
   sync-to-wiki:
     name: 同步新术语表至 Wiki
-    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    if: github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     env:
       HAS_WIKI_PAT: ${{ secrets.WIKI_PAT != '' }}
