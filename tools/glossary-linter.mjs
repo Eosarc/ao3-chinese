@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Aria - AO3 Translator 在线术语表智能审查与质检内核
+ * AO3 Translator 在线术语表智能审查与质检内核
  * 深度对齐《术语表编写指南》与 AOT 客户端离线解析器规则
  */
 
@@ -174,7 +174,274 @@ export function smartSplit(str, regex) {
 }
 
 /**
- * 审查单个术语表文件
+ * 自动生成修复后术语表全文
+ * mode: 'minimal' (仅修复阻断性错误) | 'recommended' (体验最佳推荐)
+ */
+export function generateFixedGlossary(rawContent, mode = 'minimal') {
+  const lines = rawContent.split(/\r?\n/);
+  const result = [];
+  let inSection = '';
+
+  // 在 recommended 模式下，预先分析所有词条，确定哪些行保留、哪些行剔除
+  const keptLineIndices = new Set();
+  const termLineIndices = new Set();
+
+  if (mode === 'recommended') {
+    let currentSec = '';
+    const keyOccurrences = new Map(); // lowerKey -> Array<{ lineIndex, normVal }>
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineTrim = lines[i].trim();
+      if (!lineTrim || lineTrim.startsWith('//')) continue;
+
+      const cleanH = lineTrim.toLowerCase().replace(/[:：\s]*$/, '');
+      let isH = false;
+      for (const k in SECTION_HEADERS) {
+        if (SECTION_HEADERS[k].includes(cleanH)) {
+          currentSec = k;
+          isH = true;
+          break;
+        }
+      }
+      if (isH) continue;
+      if (currentSec !== 'TERMS' && currentSec !== 'GENERAL_TERMS') continue;
+
+      let wLine = lineTrim.replace(/[,，]$/, '');
+      if (wLine.includes('//') && !wLine.startsWith('//')) {
+        wLine = wLine.substring(0, wLine.indexOf('//')).trim();
+      }
+      const wholeQ = isWholeLineQuotedWithSeparator(wLine);
+      if (wholeQ) {
+        wLine = `${wholeQ.key}：${wholeQ.value}`;
+      }
+      let parsed = parseGlossaryKeyValuePair(wLine);
+      if (!parsed) {
+        if (wLine.includes("'") || wLine.includes('‘')) {
+          const cIdx = wLine.indexOf('：') !== -1 ? wLine.indexOf('：') : wLine.indexOf(':');
+          const eIdx = wLine.indexOf('=') !== -1 ? wLine.indexOf('=') : wLine.indexOf('＝');
+          const sepIdx = cIdx !== -1 ? cIdx : eIdx;
+          if (sepIdx !== -1) {
+            wLine = `"${wLine.substring(0, sepIdx).trim()}"${wLine[sepIdx]}${wLine.substring(sepIdx + 1).trim()}`;
+            parsed = parseGlossaryKeyValuePair(wLine);
+          }
+        }
+        if (!parsed) {
+          const matchB = wLine.match(/^([A-Za-z0-9\s.'"-]+?)\s+([\u4e00-\u9fa5\u3040-\u30ff\u0400-\u04ff].*)$/);
+          if (matchB) {
+            wLine = `${matchB[1].trim()}：${matchB[2].trim()}`;
+            parsed = parseGlossaryKeyValuePair(wLine);
+          }
+        }
+      }
+
+      if (parsed) {
+        const k = parsed.key.trim().replace(/^["“]|["”]$/g, '').toLowerCase();
+        const v = parsed.value.trim().replace(/\/\/.*$/, '').replace(/[,，]$/, '').trim().toLowerCase();
+        termLineIndices.add(i);
+        if (!keyOccurrences.has(k)) {
+          keyOccurrences.set(k, []);
+        }
+        keyOccurrences.get(k).push({ lineIndex: i, normVal: v });
+      }
+    }
+
+    for (const [k, occs] of keyOccurrences.entries()) {
+      if (occs.length === 1) {
+        keptLineIndices.add(occs[0].lineIndex);
+      } else {
+        const distinctVals = new Set(occs.map(o => o.normVal));
+        if (distinctVals.size === 1) {
+          // 完全相同的重复：默认保留首次出现的规则
+          keptLineIndices.add(occs[0].lineIndex);
+        } else {
+          // 相同原文不同译文的重复：默认保留最后出现的规则
+          keptLineIndices.add(occs[occs.length - 1].lineIndex);
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      result.push('');
+      continue;
+    }
+
+    if (trimmed.startsWith('//')) {
+      result.push(rawLine);
+      continue;
+    }
+
+    const cleanHeader = trimmed.toLowerCase().replace(/[:：\s]*$/, '');
+    let isHeader = false;
+    for (const key in SECTION_HEADERS) {
+      if (SECTION_HEADERS[key].includes(cleanHeader)) {
+        inSection = key;
+        isHeader = true;
+        result.push(trimmed.replace(/[:：\s]*$/, ''));
+        break;
+      }
+    }
+    if (isHeader) continue;
+
+    // 在 recommended 模式下，检查是否为需要剔除的冲突/重复行
+    if (mode === 'recommended' && termLineIndices.has(i) && !keptLineIndices.has(i)) {
+      continue;
+    }
+
+    // 元数据区
+    if (!inSection) {
+      if (mode === 'recommended') {
+        const dateMatch = rawLine.match(/^(\s*(?:更新时间|last_updated)\s*[:：]\s*)(\d{2})[-/.](\d{2})[-/.](\d{4})(.*)$/i);
+        if (dateMatch) {
+          result.push(`${dateMatch[1]}${dateMatch[4]}-${dateMatch[3]}-${dateMatch[2]}${dateMatch[5]}`);
+          continue;
+        }
+      }
+      result.push(rawLine);
+      continue;
+    }
+
+    if (inSection === 'FORBIDDEN_TERMS') {
+      const cleanForbidden = rawLine.replace(/[,，]$/, '').trim();
+      const sepMatch = cleanForbidden.match(/^([^:=：＝]+)\s*[:=：＝].*$/);
+      if (sepMatch) {
+        result.push(sepMatch[1].trim());
+      } else {
+        result.push(cleanForbidden);
+      }
+      continue;
+    }
+
+    if (inSection === 'REGEX_TERMS') {
+      result.push(rawLine.replace(/[,，]$/, ''));
+      continue;
+    }
+
+    // TERMS 或 GENERAL_TERMS
+    let workingLine = trimmed.replace(/[,，]$/, '');
+    let inlineComment = '';
+    if (workingLine.includes('//') && !workingLine.startsWith('//')) {
+      const cIdx = workingLine.indexOf('//');
+      inlineComment = workingLine.substring(cIdx).trim();
+      workingLine = workingLine.substring(0, cIdx).trim();
+    }
+
+    // 检查整行被引号包裹
+    const wholeQuoted = isWholeLineQuotedWithSeparator(workingLine);
+    if (wholeQuoted) {
+      workingLine = `${wholeQuoted.key}：${wholeQuoted.value}`;
+    }
+
+    let parsed = parseGlossaryKeyValuePair(workingLine);
+
+    // 若解析失败，尝试自动修复
+    if (!parsed) {
+      // 1. 撇号未加双引号
+      if (workingLine.includes("'") || workingLine.includes('‘')) {
+        const cIdx = workingLine.indexOf('：') !== -1 ? workingLine.indexOf('：') : workingLine.indexOf(':');
+        const eIdx = workingLine.indexOf('=') !== -1 ? workingLine.indexOf('=') : workingLine.indexOf('＝');
+        const sepIdx = cIdx !== -1 ? cIdx : eIdx;
+        if (sepIdx !== -1) {
+          const rawK = workingLine.substring(0, sepIdx).trim();
+          const sep = workingLine[sepIdx];
+          const rawV = workingLine.substring(sepIdx + 1).trim();
+          workingLine = `"${rawK}"${sep}${rawV}`;
+          parsed = parseGlossaryKeyValuePair(workingLine);
+        }
+      }
+
+      // 2. 缺失冒号或等号（仅有空格）
+      if (!parsed) {
+        const matchBoundary = workingLine.match(/^([A-Za-z0-9\s.'"-]+?)\s+([\u4e00-\u9fa5\u3040-\u30ff\u0400-\u04ff].*)$/);
+        if (matchBoundary) {
+          workingLine = `${matchBoundary[1].trim()}：${matchBoundary[2].trim()}`;
+          parsed = parseGlossaryKeyValuePair(workingLine);
+        } else {
+          const spaceParts = workingLine.split(/\s{2,}|\t/);
+          if (spaceParts.length >= 2) {
+            workingLine = `${spaceParts[0].trim()}：${spaceParts.slice(1).join(' ').trim()}`;
+            parsed = parseGlossaryKeyValuePair(workingLine);
+          }
+        }
+      }
+    }
+
+    if (!parsed) {
+      result.push(rawLine);
+      continue;
+    }
+
+    let key = parsed.key.trim();
+    let val = parsed.value.trim();
+    let sep = parsed.separator === '=' ? ' = ' : '：';
+
+    // 修复等号两侧分段数不匹配问题（转为冒号以确保兼容）
+    if (parsed.separator === '=') {
+      const keyParts = smartSplit(key.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
+      const valParts = smartSplit(val.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
+      if (keyParts.length > 1 && keyParts.length !== valParts.length) {
+        sep = '：';
+      }
+    }
+
+    // 拆分斜杠词条
+    const subKeys = (key.includes('/') && !key.includes('://'))
+      ? key.split('/').map(k => k.trim()).filter(Boolean)
+      : [key];
+
+    for (const subK of subKeys) {
+      let finalKey = subK;
+      let finalSep = sep;
+      let finalVal = val;
+
+      const isQuoted = (finalKey.startsWith('"') && finalKey.endsWith('"')) || (finalKey.startsWith('“') && finalKey.endsWith('”'));
+
+      // 必须转义撇号
+      if ((finalKey.includes("'") || finalKey.includes('‘')) && !isQuoted) {
+        finalKey = `"${finalKey}"`;
+      }
+
+      if (mode === 'recommended') {
+        // 连字符特别豁免，只为包含其它非连字符标点的词条加双引号
+        const keyWithoutHyphens = finalKey.replace(/^["“]|["”]$/g, '').replace(/[\-\—\–\－]/g, '');
+        const hasOtherPunctuation = keyWithoutHyphens.match(/[\'\’\‘\(\)\[\]\{\}\<\>\!\?\:\.\/\&\|\$\#\@\*\+\=\^\~]/);
+        if (hasOtherPunctuation && !finalKey.startsWith('"')) {
+          finalKey = `"${finalKey.replace(/^["“]|["”]$/g, '')}"`;
+        }
+
+        // 人名冒号升级为等号
+        if (inSection === 'TERMS' && (finalSep === '：' || finalSep === ':')) {
+          const kParts = smartSplit(finalKey.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
+          const vParts = smartSplit(finalVal.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
+          if (kParts.length > 1 && kParts.length === vParts.length) {
+            finalSep = ' = ';
+          }
+        }
+
+        // 行尾注释提取到前一行
+        if (inlineComment) {
+          result.push(inlineComment);
+          inlineComment = '';
+        }
+      }
+
+      if (inlineComment) {
+        result.push(`${finalKey}${finalSep}${finalVal}          ${inlineComment}`);
+      } else {
+        result.push(`${finalKey}${finalSep}${finalVal}`);
+      }
+    }
+  }
+
+  return result.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
+/**
+ * 结构化审查单个术语表文件
  */
 export function lintGlossaryFile(filePath, baseBranchContent = null) {
   const fileName = path.basename(filePath);
@@ -184,9 +451,11 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
   const fileReport = {
     file: fileName,
     filePath,
+    rawContent: content,
     errors: [],
     warnings: [],
-    tips: [],
+    errorGroups: {},
+    warningGroups: {},
     stats: {
       terms: 0,
       generalTerms: 0,
@@ -195,9 +464,17 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
     }
   };
 
+  function addIssue(groupMap, list, typeKey, typeTitle, fullLine) {
+    if (!groupMap[typeKey]) {
+      groupMap[typeKey] = { title: typeTitle, items: [] };
+    }
+    groupMap[typeKey].items.push(fullLine);
+    list.push(fullLine);
+  }
+
   // 1. 文件后缀检查
   if (!fileName.endsWith('.txt')) {
-    fileReport.errors.push(`文件缺少 ".txt" 后缀。AOT 在线术语表文件必须以 ".txt" 结尾。`);
+    addIssue(fileReport.errorGroups, fileReport.errors, 'file_ext', '文件缺少 `.txt` 后缀', fileName);
   }
 
   // 2. 扫描并定位各区域
@@ -240,22 +517,22 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       const key = keyMap[rawKey] || rawKey;
       metadata[key] = val;
     } else if (!item.text.trim().startsWith('//')) {
-      fileReport.warnings.push(`第 ${item.lineNo} 行元数据 "${item.text.trim()}" 格式不规范，未能被识别为有效元数据。请使用「键：值」格式。`);
+      addIssue(fileReport.warningGroups, fileReport.warnings, 'metadata_format', '元数据格式不规范', item.text.trim());
     }
   }
 
   if (!metadata.version) {
-    fileReport.errors.push(`元数据缺失：文件头部缺少必填的 "版本号"（例如「版本号：1.0.0」）。客户端依赖该字段执行版本检测。`);
+    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_version', '元数据缺失版本号', '版本号：1.0.0');
   }
   if (!metadata.maintainer) {
-    fileReport.errors.push(`元数据缺失：文件头部缺少必填的 "维护者"（例如「维护者：昵称」）。`);
+    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_maintainer', '元数据缺失维护者', '维护者：昵称');
   }
 
   // 日期格式检查
   if (metadata.last_updated) {
     const dateStr = metadata.last_updated;
-    if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
-      fileReport.warnings.push(`元数据中更新时间 "${dateStr}" 存在日-月-年与月-日-年的二义性，建议统一使用 ISO 8601 标准「YYYY-MM-DD」格式（例如「更新时间：2026-11-02」）。`);
+    if (/^\d{2}[-/.]\d{2}[-/.]\d{4}$/.test(dateStr)) {
+      addIssue(fileReport.warningGroups, fileReport.warnings, 'date_format', '元数据中更新时间存在 `日-月-年` 与 `月-日-年` 的二义性。建议统一使用 ISO 8601 标准 YYYY-MM-DD 格式。', `更新时间：${dateStr}`);
     }
   }
 
@@ -266,19 +543,19 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       const baseVersion = baseMatch[1].trim();
       const cmp = compareVersions(metadata.version, baseVersion);
       if (cmp <= 0) {
-        fileReport.errors.push(`版本号未递增：当前版本号 (v${metadata.version}) 必须大于主分支已有版本号 (v${baseVersion})。若未提升版本号，已订阅该术语表的读者客户端将无法自动同步更新。`);
+        addIssue(fileReport.errorGroups, fileReport.errors, 'version_not_bumped', '版本号未递增', `当前版本号 (v${metadata.version}) 必须大于主分支已有版本号 (v${baseVersion})`);
       }
     }
   }
 
   // 4. 有效分区检查
   if (sections.length === 0) {
-    fileReport.errors.push(`文件结构错误：未找到任何有效分区标题。请至少包含「词条」、「通用词条」、「禁翻词条」或「正则表达式」中的一个。`);
+    addIssue(fileReport.errorGroups, fileReport.errors, 'missing_section', '文件缺少有效分区标题', '请至少包含「词条」、「通用词条」、「禁翻词条」或「正则表达式」中的一个。');
     return fileReport;
   }
 
   // 5. 逐行解析审查各分区词条
-  const seenKeys = new Map();
+  const termEntriesByKey = new Map();
 
   for (let s = 0; s < sections.length; s++) {
     const section = sections[s];
@@ -293,12 +570,12 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       // 检查行尾注释 //
       if (line.includes('//') && !line.startsWith('//')) {
-        fileReport.warnings.push(`第 ${lineNo} 行词条内包含行尾注释 "${line.substring(line.indexOf('//'))}"。AOT 客户端不会自动剔除行尾注释，注释内容会被当成译文一同替换进正文！建议将说明注释单独另起一行。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'inline_comment', '规则内包含行尾注释。建议将说明/注释单独另起一行。', rawLine.trim());
       }
 
       // 检查行尾多余逗号
       if (/[,，]$/.test(line)) {
-        fileReport.warnings.push(`第 ${lineNo} 行末尾含有多余的逗号，建议移除。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'trailing_comma', '规则末尾包含多余逗号。建议去除。', rawLine.trim());
       }
 
       const cleanLine = line.replace(/[,，]$/, '');
@@ -306,7 +583,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       if (section.type === 'FORBIDDEN_TERMS') {
         fileReport.stats.forbiddenTerms++;
         if (cleanLine.includes(':') || cleanLine.includes('：') || cleanLine.includes('=')) {
-          fileReport.warnings.push(`第 ${lineNo} 行禁翻词条 "${cleanLine}" 包含了分隔符或译文。禁翻词条区只需填写需要保持原文不被翻译的词条本身即可。`);
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'forbidden_term_sep', '禁翻词条包含了分隔符或译文。禁翻词条仅需填写不希望翻译的原文本身。', rawLine.trim());
         }
         continue;
       }
@@ -315,20 +592,20 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
         fileReport.stats.regexTerms++;
         const regexMatch = cleanLine.match(/^(.+?)\s*[:：]\s*(.*)$/s);
         if (!regexMatch) {
-          fileReport.errors.push(`第 ${lineNo} 行正则表达式缺少冒号分隔符。正则区格式应为「正则表达式: 替换后的文本」。`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'regex_missing_sep', '正则表达式缺少冒号分隔符', rawLine.trim());
           continue;
         }
         const pattern = regexMatch[1].trim();
         try {
           const testRegex = new RegExp(pattern);
           if (testRegex.test('')) {
-            fileReport.errors.push(`第 ${lineNo} 行正则表达式 "${pattern}" 能够匹配空字符串。这会导致浏览器端死循环卡死！`);
+            addIssue(fileReport.errorGroups, fileReport.errors, 'regex_empty_match', '正则表达式能匹配空字符串', rawLine.trim());
           }
           if (/[\(][^()]*[*+{][^()]*[\)][*+]/.test(pattern)) {
-            fileReport.errors.push(`第 ${lineNo} 行正则表达式 "${pattern}" 包含嵌套量词，存在灾难性回溯（ReDoS）假死风险。`);
+            addIssue(fileReport.errorGroups, fileReport.errors, 'regex_redos', '正则表达式包含嵌套量词（ReDoS 假死风险）', rawLine.trim());
           }
         } catch (e) {
-          fileReport.errors.push(`第 ${lineNo} 行正则表达式 "${pattern}" 语法非法: ${e.message}`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'regex_syntax', '正则表达式语法非法', rawLine.trim());
         }
         continue;
       }
@@ -339,15 +616,15 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       const wholeQuoted = isWholeLineQuotedWithSeparator(cleanLine);
       if (wholeQuoted) {
-        fileReport.warnings.push(`第 ${lineNo} 行引号包裹了整条规则，而非仅包裹词条。请改为「引号只包词条、分隔符放引号外」，例如 ${wholeQuoted.key}：${wholeQuoted.value}。`);
+        addIssue(fileReport.warningGroups, fileReport.warnings, 'whole_line_quoted', '引号包裹了整条规则。建议引号只包裹原文词条、分隔符放引号外。', rawLine.trim());
       }
 
-      const parsed = parseGlossaryKeyValuePair(cleanLine);
+      const parsed = wholeQuoted ? { key: wholeQuoted.key, value: wholeQuoted.value, separator: ':' } : parseGlossaryKeyValuePair(cleanLine);
       if (!parsed) {
         if (cleanLine.includes("'") || cleanLine.includes('‘')) {
-          fileReport.errors.push(`第 ${lineNo} 行词条 "${cleanLine}" 原文包含撇号/单引号但未用双引号包裹。客户端解析器会因找不到闭合单引号而直接丢弃整行规则！请改为在原文两端加半角双引号，例如："Girls' Academy"：女子学园。`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含标点符号但未用 `"` 包裹', rawLine.trim());
         } else {
-          fileReport.errors.push(`第 ${lineNo} 行词条 "${cleanLine}" 缺失冒号 (:) 或等号 (=) 分隔符，已被客户端跳过。若仅有空格分隔，请补齐分隔符。`);
+          addIssue(fileReport.errorGroups, fileReport.errors, 'missing_separator', '规则缺失冒号 `:` 或等号 `=` 分隔符', rawLine.trim());
         }
         continue;
       }
@@ -357,49 +634,96 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       // 检查原文中是否使用了斜杠 / 表示并列
       if (key.includes('/') && !key.includes('://')) {
-        fileReport.errors.push(`第 ${lineNo} 行词条原文 "${key}" 包含了斜杠 "/"。AOT 不支持用斜杠表达同义词或备选词，这会导致整个包含斜杠的长短语整体匹配，两边的独立词汇均无法被翻译！请拆分为独立的多行词条。`);
+        addIssue(fileReport.errorGroups, fileReport.errors, 'slash_in_key', '规则原文包含斜杠 `/`', rawLine.trim());
       }
 
-      // 检查原文是否包含标点符号但未用半角双引号包裹（通用语言与标点）
+      // 检查原文是否包含标点符号但未用双引号包裹
       const isQuoted = (key.startsWith('"') && key.endsWith('"')) || (key.startsWith('“') && key.endsWith('”'));
-      const punctuationMatch = key.replace(/^["“](.*)["”]$/, '$1').match(/[\'\’\-\(\)\[\]\!\?\:\.\/]/);
-      if (punctuationMatch && !isQuoted) {
-        if (key.includes("'") || key.includes('‘')) {
-          fileReport.errors.push(`第 ${lineNo} 行词条原文 "${key}" 包含撇号/单引号，必须使用半角双引号包裹（如 "${key}"：${val}），否则会导致 AOT 解析丢弃整行规则！`);
-        } else if (!key.includes('/')) {
-          fileReport.warnings.push(`第 ${lineNo} 行词条原文 "${key}" 包含标点符号但未用双引号包裹。建议使用双引号包裹原文（如 "${key}"：${val}）以开启精准字面量匹配，避免被拆词或符号影响。`);
-        }
-      }
+      const hasApostrophe = /[\'‘’]/.test(key);
 
-      // 检查等号关联语法（=）
-      if (parsed.separator === '=') {
-        const keyParts = smartSplit(key.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
-        const valParts = smartSplit(val.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
-        if (keyParts.length > 1 && keyParts.length !== valParts.length) {
-          fileReport.errors.push(`第 ${lineNo} 行等号关联规则 "${key} = ${val}" 的原文分段数 (${keyParts.length}) 与译文分段数 (${valParts.length}) 不一致。AOT 要求等号两侧段数必须完全对等（以空格或·分隔），否则拆分单姓名/单词规则将完全失效！`);
-        }
-      } else {
-        // 使用冒号但原文为人名多词
-        if (section.type === 'TERMS') {
-          const parts = smartSplit(key, TERM_SEPARATOR_RE);
-          if (parts.length > 1 && (val.includes(' ') || val.includes('·'))) {
-            fileReport.warnings.push(`第 ${lineNo} 行人名 "${key}" 使用了冒号 ":"。如果希望在小说中单独出现主角名字或姓氏时也能自动匹配，建议改用等号语法（如 "${key} = ${val}"）。若作者有意只匹配全名，可忽略本条建议。`);
+      if (!isQuoted) {
+        if (hasApostrophe) {
+          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含标点符号但未用 `"` 包裹', rawLine.trim());
+        } else if (!key.includes('/')) {
+          // 连字符特别豁免，只检测连字符以外的其它非连字符标点
+          const keyWithoutHyphens = key.replace(/[\-\—\–\－]/g, '');
+          const hasOtherPunctuation = keyWithoutHyphens.match(/[\(\)\[\]\{\}\<\>\!\?\:\.\/\&\|\$\#\@\*\+\=\^\~]/);
+          if (hasOtherPunctuation) {
+            addIssue(fileReport.warningGroups, fileReport.warnings, 'unquoted_punctuation', '词条原文包含标点符号但未用 `"` 包裹。建议加 `"` 开启精准匹配。', rawLine.trim());
           }
         }
       }
 
-      // 检查译文内残留未闭合的分隔符
-      if (val && !/^https?:\/\//.test(val) && hasTopLevelResidualSeparator(val)) {
-        fileReport.warnings.push(`第 ${lineNo} 行译文 "${val}" 内含有额外的冒号或等号分隔符，请确认是否为误输入。如需在译文中保留标点，请用双引号包裹。`);
+      // 检查等号关联语法（=）：放进“格式与体验建议”
+      if (parsed.separator === '=') {
+        const keyParts = smartSplit(key.replace(/^["“](.*)["”]$/, '$1'), TERM_SEPARATOR_RE);
+        const valParts = smartSplit(val.replace(/^["“](.*)["”]$/, '$1'), TRANSLATION_SEPARATOR_RE);
+        if (keyParts.length > 1 && keyParts.length !== valParts.length) {
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'unequal_equal_parts', '`=` 语法规则原文部分数与译文部分数不一致。建议检查。', rawLine.trim());
+        }
+      } else {
+        // 使用冒号但原文多词且译文多词（可能为姓名或其它复合专有名词）
+        if (section.type === 'TERMS') {
+          const cleanVal = val.replace(/\/\/.*$/, '').trim();
+          const parts = smartSplit(key, TERM_SEPARATOR_RE);
+          const valParts = smartSplit(cleanVal, TRANSLATION_SEPARATOR_RE);
+          if (parts.length > 1 && valParts.length > 1) {
+            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '复合专有名词使用了 `:` 语法。若为角色姓名，建议改用 `=` 语法以支持单名/姓氏拆分自动匹配。', rawLine.trim());
+          }
+        }
       }
 
-      // 检查重复词条
+      // 记录词条，用于后续冲突与完全重复分析
       const lowerKey = key.toLowerCase();
-      if (seenKeys.has(lowerKey)) {
-        const prevLine = seenKeys.get(lowerKey);
-        fileReport.warnings.push(`第 ${lineNo} 行词条 "${key}" 重复定义（已在第 ${prevLine} 行定义过）。`);
+      const cleanVal = val.replace(/\/\/.*$/, '').replace(/[,，]$/, '').trim();
+      if (!termEntriesByKey.has(lowerKey)) {
+        termEntriesByKey.set(lowerKey, []);
+      }
+      termEntriesByKey.get(lowerKey).push({
+        lineNo,
+        rawLine: rawLine.trim(),
+        key,
+        cleanVal,
+        sep: parsed.separator
+      });
+    }
+  }
+
+  // 审查同一原文不同译文与完全重复规则
+  for (const [lowerKey, entries] of termEntriesByKey.entries()) {
+    if (entries.length <= 1) continue;
+
+    const distinctVals = new Set(entries.map(e => e.cleanVal.toLowerCase()));
+
+    if (distinctVals.size > 1) {
+      // 1. 同一原文词条存在不同译文
+      const groupLines = entries.map(e => {
+        return e.rawLine.replace(/\/\/.*$/, '').replace(/[,，]$/, '').trim();
+      });
+      const uniqueGroupLines = [...new Set(groupLines)];
+      addIssue(
+        fileReport.warningGroups,
+        fileReport.warnings,
+        'conflicting_translation',
+        '同一原文词条存在不同译文。建议确认并统一。',
+        uniqueGroupLines.join('\n')
+      );
+    }
+
+    // 2. 存在完全相同的冗余规则
+    const seenRuleStrings = new Set();
+    for (const e of entries) {
+      const normRule = `${e.key.toLowerCase()}::${e.sep}::${e.cleanVal.toLowerCase()}`;
+      if (seenRuleStrings.has(normRule)) {
+        addIssue(
+          fileReport.warningGroups,
+          fileReport.warnings,
+          'duplicate_term',
+          '存在完全相同的冗余规则。建议移除。',
+          e.rawLine
+        );
       } else {
-        seenKeys.set(lowerKey, lineNo);
+        seenRuleStrings.add(normRule);
       }
     }
   }
@@ -408,129 +732,264 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 }
 
 /**
- * 自动修复缺失 .txt 后缀的文件
+ * 生成 Markdown 审查报告
  */
-export function autoFixMissingTxtExtensions(dirPath) {
-  const fixedFiles = [];
-  if (!fs.existsSync(dirPath)) return fixedFiles;
+export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMain = true) {
+  const isSingle = reports.length === 1;
+  const singleBaseName = isSingle ? path.basename(reports[0].file, '.txt') : '';
 
-  const entries = fs.readdirSync(dirPath);
-  for (const entry of entries) {
-    if (entry.startsWith('.') || entry.endsWith('.json')) continue;
-    const fullPath = path.join(dirPath, entry);
-    if (!fs.statSync(fullPath).isFile()) continue;
-
-    if (!entry.endsWith('.txt')) {
-      const targetPath = `${fullPath}.txt`;
-      fs.renameSync(fullPath, targetPath);
-      fixedFiles.push({ oldName: entry, newName: `${entry}.txt` });
-    }
-  }
-  return fixedFiles;
-}
-
-/**
- * 检查 PR 描述表单内容（单选防呆与合规校验）
- */
-export function checkPrBody(body) {
-  const warnings = [];
-  if (!body) return warnings;
-
-  // PR 类型单选检查
-  const typeMatches = body.match(/\[[xX]\]\s*(?:在线术语表提交|功能改进|界面汉化|文档与[其其它]维护)/g) || [];
-  if (typeMatches.length > 1) {
-    warnings.push('「Pull Request 类型」同时勾选了多个选项，建议单选其一，便于维护者快速归类。');
-  } else if (typeMatches.length === 0) {
-    warnings.push('未在 PR 描述中勾选「Pull Request 类型」，建议单选其一以明确意图。');
-  }
-
-  // 变更类型单选检查
-  const changeMatches = body.match(/\[[xX]\]\s*(?:新增在线术语表|更新已有在线术语表)/g) || [];
-  if (changeMatches.length > 1) {
-    warnings.push('「变更类型」同时勾选了“新增”与“更新”，建议单选其一。');
-  }
-
-  // 检查是否同意收录至 Wiki
-  if (!/\[[xX]\]\s*同意收录至\s*AO3\s*Translator/i.test(body)) {
-    warnings.push('检测到未勾选「同意收录至 AO3 Translator 官方在线术语库」，若合并，本术语表将不会自动写入官方 Wiki。若有意公开分享给其它读者，请勾选该项。');
-  }
-
-  // 检查填写的 Raw 链接是否为 patch 临时分支
-  const rawMatch = body.match(/https?:\/\/raw\.githubusercontent\.com\/[^\s\)\}\]]+/);
-  if (rawMatch && rawMatch[0].includes('/patch-')) {
-    warnings.push(`检测到填写的 Raw 链接包含临时分支路径（${rawMatch[0]}）。临时分支可能被意外删除，建议使用固定的 main 分支链接。`);
-  }
-
-  return warnings;
-}
-
-/**
- * 生成 Aria Markdown 审查报告
- */
-export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMain = true, prBodyWarnings = []) {
-  let md = `## Aria 术语表自动审查报告\n\n`;
+  let md = isSingle ? `## ${singleBaseName} - 自动审查报告\n\n` : `## 在线术语表自动审查报告\n\n`;
 
   if (autoFixedList.length > 0) {
     md += `> [!NOTE]\n`;
-    md += `> **自动修复记录**：\n`;
+    md += `> **自动修复记录**：\n>\n`;
     for (const item of autoFixedList) {
       md += `> - 检测到文件 \`${item.oldName}\` 缺少 \`.txt\` 后缀，已自动补充并重命名为 \`${item.newName}\`。\n`;
     }
     md += `\n`;
   }
 
-  if (prBodyWarnings.length > 0) {
-    md += `### PR 描述表单核对\n\n`;
-    for (const pw of prBodyWarnings) {
-      md += `- **提示**：${pw}\n`;
+  // 目录生成
+  md += `### 目录\n\n`;
+  if (isSingle) {
+    const report = reports[0];
+    md += `- 规则统计\n`;
+    if (report.errors.length > 0) {
+      md += `- 阻断性错误\n`;
     }
-    md += `\n`;
+    if (report.warnings.length > 0) {
+      md += `- 格式与体验建议\n`;
+    }
+    if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
+      md += `- 优化版本参考\n`;
+      md += `  - 1\\. 基础修复版\n`;
+      md += `  - 2\\. 体验最佳版\n`;
+    }
+    if (!isHeadBranchMain) {
+      md += `- 分支更新建议\n`;
+    }
+  } else {
+    for (const report of reports) {
+      md += `- 文件：\`${report.file}\`\n`;
+      md += `  - 规则统计\n`;
+      if (report.errors.length > 0) {
+        md += `  - 阻断性错误\n`;
+      }
+      if (report.warnings.length > 0) {
+        md += `  - 格式与体验建议\n`;
+      }
+      if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
+        md += `  - 优化版本参考\n`;
+        md += `    - 1\\. 基础修复版\n`;
+        md += `    - 2\\. 体验最佳版\n`;
+      }
+    }
+    if (!isHeadBranchMain) {
+      md += `- 分支更新建议\n`;
+    }
   }
+  md += `\n`;
 
   let totalErrors = 0;
-  let totalWarnings = prBodyWarnings.length;
+  let totalWarnings = 0;
+
+  const ORDERED_WARNING_KEYS = [
+    'unequal_equal_parts',
+    'date_format',
+    'person_colon',
+    'unquoted_punctuation',
+    'whole_line_quoted',
+    'trailing_comma',
+    'inline_comment',
+    'forbidden_term_sep',
+    'metadata_format',
+    'conflicting_translation',
+    'duplicate_term'
+  ];
+
+  const WARNING_FIX_DESCRIPTIONS = {
+    unequal_equal_parts: '将分段数不对等的 `=` 语法规则修改为 `:`；',
+    date_format: '标准化更新时间为 ISO 8601 (`YYYY-MM-DD`) 格式；',
+    person_colon: '将符合复合专有名词结构的规则升级为 `=` 语法，使单独名、姓也能自动翻译；',
+    unquoted_punctuation: '为含标点符号的原文词条包裹双引号，开启精准匹配；',
+    whole_line_quoted: '修正整行包裹引号的问题，使引号仅精准包裹原文词条；',
+    trailing_comma: '清除规则末尾残留的逗号；',
+    inline_comment: '将行尾 `//` 注释自动提取为独立行注释，避免注释混入正文替换；',
+    forbidden_term_sep: '净化禁翻词条，去除多余的分隔符与译文；',
+    metadata_format: '规范元数据属性书写格式；',
+    conflicting_translation: '解决同一原文的译文冲突（默认保留最后出现的规则）；',
+    duplicate_term: '移除完全相同的冗余规则（默认保留首次出现的规则）；'
+  };
+
+  const ORDERED_ERROR_KEYS = [
+    'missing_separator',
+    'slash_in_key',
+    'unquoted_apostrophe',
+    'file_ext',
+    'missing_version',
+    'missing_maintainer',
+    'version_not_bumped',
+    'missing_section',
+    'regex_missing_sep',
+    'regex_empty_match',
+    'regex_redos',
+    'regex_syntax'
+  ];
 
   for (const report of reports) {
     totalErrors += report.errors.length;
     totalWarnings += report.warnings.length;
 
-    md += `### 文件：\`${report.file}\`\n\n`;
-    md += `- **词条统计**：词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
+    const fileSlug = report.file.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
 
+    if (!isSingle) {
+      md += `### 文件：\`${report.file}\`\n\n`;
+      md += `#### 规则统计\n\n`;
+    } else {
+      md += `### 规则统计\n\n`;
+    }
+    md += `词条区 ${report.stats.terms} 条，通用词条区 ${report.stats.generalTerms} 条，禁翻词条区 ${report.stats.forbiddenTerms} 条，正则表达式 ${report.stats.regexTerms} 条。\n\n`;
+
+    // 阻断性错误
     if (report.errors.length > 0) {
-      md += `#### 阻断性错误（必须修复）\n`;
-      for (const err of report.errors) {
-        md += `- [ ] **错误**：${err}\n`;
+      md += isSingle ? `### 阻断性错误\n\n` : `#### 阻断性错误\n\n`;
+      let errIdx = 1;
+      const sortedErrorKeys = Object.keys(report.errorGroups).sort((a, b) => {
+        const ia = ORDERED_ERROR_KEYS.indexOf(a);
+        const ib = ORDERED_ERROR_KEYS.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+
+      for (const key of sortedErrorKeys) {
+        const group = report.errorGroups[key];
+        const countStr = `（共 ${group.items.length} 处）`;
+        let titleStr = group.title;
+        if (!titleStr.includes('（共')) {
+          titleStr = `${titleStr}${countStr}`;
+        }
+        if (!titleStr.endsWith('：') && !titleStr.endsWith(':')) {
+          titleStr += '：';
+        }
+
+        md += `${errIdx}. ${titleStr}\n\n`;
+        md += '```text\n';
+        md += group.items.join('\n') + '\n';
+        md += '```\n\n';
+        errIdx++;
       }
-      md += `\n`;
     }
 
+    // 格式与体验建议
     if (report.warnings.length > 0) {
-      md += `#### 格式与体验建议（建议优化）\n`;
-      for (const warn of report.warnings) {
-        md += `- **提示**：${warn}\n`;
+      md += isSingle ? `### 格式与体验建议\n\n` : `#### 格式与体验建议\n\n`;
+      let warnIdx = 1;
+      const sortedWarningKeys = Object.keys(report.warningGroups).sort((a, b) => {
+        const ia = ORDERED_WARNING_KEYS.indexOf(a);
+        const ib = ORDERED_WARNING_KEYS.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+
+      for (const key of sortedWarningKeys) {
+        const group = report.warningGroups[key];
+        let titleStr = group.title;
+        const countStr = key === 'duplicate_term' ? `（共 ${group.items.length} 条）` : `（共 ${group.items.length} 处）`;
+        
+        if (!titleStr.includes('（共')) {
+          if (titleStr.includes('。')) {
+            const dotIdx = titleStr.indexOf('。');
+            titleStr = `${titleStr.substring(0, dotIdx)}${countStr}。${titleStr.substring(dotIdx + 1)}`;
+          } else {
+            titleStr = `${titleStr}${countStr}`;
+          }
+        }
+        if (!titleStr.endsWith('：') && !titleStr.endsWith(':') && !titleStr.endsWith('。')) {
+          titleStr += '：';
+        }
+
+        md += `${warnIdx}. ${titleStr}\n\n`;
+        md += '```text\n';
+        if (key === 'conflicting_translation') {
+          md += group.items.join('\n\n') + '\n';
+        } else {
+          md += group.items.join('\n') + '\n';
+        }
+        md += '```\n\n';
+        warnIdx++;
       }
-      md += `\n`;
     }
 
     if (report.errors.length === 0 && report.warnings.length === 0) {
       md += `> [!TIP]\n`;
       md += `> 该术语表编写极其规范，未发现任何格式语法问题，符合 AOT 客户端解析标准！\n\n`;
     }
+
+    // 优化版本参考
+    if (report.rawContent && (report.errors.length > 0 || report.warnings.length > 0)) {
+      const fixedMinimal = generateFixedGlossary(report.rawContent, 'minimal');
+      const fixedRecommended = generateFixedGlossary(report.rawContent, 'recommended');
+
+      md += `---\n\n`;
+      md += isSingle ? `### 优化版本参考\n\n` : `#### 优化版本参考\n\n`;
+      md += isSingle ? `#### 1. 基础修复版\n\n` : `##### 1. 基础修复版\n\n`;
+      md += `> [!TIP]\n`;
+      md += `> 该版本仅修复阻断性错误：补齐缺失分隔符、拆分斜杠同义词、转义引号等，保留维护者原有的冒号匹配习惯、注释与格式。\n\n`;
+      md += '```text\n';
+      md += fixedMinimal.trim() + '\n';
+      md += '```\n\n';
+
+      md += isSingle ? `#### 2. 体验最佳版\n\n` : `##### 2. 体验最佳版\n\n`;
+      md += `> [!TIP]\n`;
+
+      const activeFixes = [];
+      for (const wKey of ORDERED_WARNING_KEYS) {
+        if (report.warningGroups[wKey] && WARNING_FIX_DESCRIPTIONS[wKey]) {
+          activeFixes.push(WARNING_FIX_DESCRIPTIONS[wKey]);
+        }
+      }
+
+      if (activeFixes.length > 0) {
+        md += `> 该版本在版本 1 的基础上，进一步完成了：\n`;
+        activeFixes.forEach((fixText, idx) => {
+          let text = fixText;
+          if (idx === activeFixes.length - 1 && text.endsWith('；')) {
+            text = text.slice(0, -1) + '。';
+          }
+          md += `> ${idx + 1}. ${text}\n`;
+        });
+        md += `\n`;
+      } else {
+        md += `> 该版本在版本 1 的基础上，进一步规范了词条排版与格式排布。\n\n`;
+      }
+      md += '```text\n';
+      md += fixedRecommended.trim() + '\n';
+      md += '```\n\n';
+    }
   }
 
   if (!isHeadBranchMain) {
     md += `---\n\n`;
-    md += `### 维护者贴心提示：\n`;
-    md += `检测到本次 PR 的源分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
+    md += `### 分支更新建议\n\n`;
+    md += `> [!TIP]\n`;
+    md += `> 检测到当前分支非 \`main\` 主分支。建议后续在网页端直接选择 **Commit directly to the \`main\` branch** 进行保存与更新。这样订阅了你 \`main\` 分支链接的读者无需重新导入，就能永久自动接收更新。\n\n`;
   }
 
-  md += `\n<!-- aria-glossary-review -->\n`;
+  // 避免超过 GitHub 评论 65536 字符限制
+  if (md.length > 60000) {
+    md = md.substring(0, 59500) + '\n\n> [!WARNING]\n> 报告内容过长，部分内容已截断。\n\n<!-- aria-glossary-review -->\n';
+  } else {
+    md += `\n<!-- aria-glossary-review -->\n`;
+  }
+
   return { markdown: md, totalErrors, totalWarnings };
 }
 
 // CLI 执行入口
-const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const isMainModule = Boolean(
+  process.argv[1] && (
+    path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) ||
+    (fs.existsSync(process.argv[1]) && fs.existsSync(fileURLToPath(import.meta.url)) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)))
+  )
+);
 if (isMainModule) {
   const args = process.argv.slice(2);
   let shouldFix = args.includes('--fix');
@@ -570,10 +1029,7 @@ if (isMainModule) {
     }
   }
 
-  const prBody = process.env.PR_BODY || '';
-  const prBodyWarnings = checkPrBody(prBody);
-
-  const { markdown, totalErrors } = formatMarkdownReport(reports, autoFixed, headBranch === 'main', prBodyWarnings);
+  const { markdown, totalErrors } = formatMarkdownReport(reports, autoFixed, headBranch === 'main');
   console.log(markdown);
 
   if (totalErrors > 0) {
