@@ -1,4 +1,4 @@
-name: 在线术语表审查与 Wiki 同步
+name: 在线术语表审查与收录
 
 on:
   push:
