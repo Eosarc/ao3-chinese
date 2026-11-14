@@ -2,9 +2,13 @@ name: 在线术语表审查与收录
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'glossaries/**'
   pull_request_target:
+    branches:
+      - main
     types: [opened, synchronize, reopened, closed]
     paths:
       - 'glossaries/**'

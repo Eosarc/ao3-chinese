@@ -371,14 +371,7 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
     }
 
     if (inSection === 'FORBIDDEN_TERMS') {
-      const cleanForbidden = rawLine.replace(/[,，]$/, '').trim();
-      const sepRegex = /[,，/／:=：＝]+/;
-      if (sepRegex.test(cleanForbidden) && !cleanForbidden.includes('://')) {
-        const parts = cleanForbidden.split(sepRegex).map(p => p.trim()).filter(Boolean);
-        for (const p of parts) result.push(p);
-      } else {
-        result.push(cleanForbidden);
-      }
+      result.push(rawLine.replace(/[,，]$/, '').trim());
       continue;
     }
 
@@ -468,10 +461,7 @@ export function generateFixedGlossary(rawContent, mode = 'minimal') {
       }
     }
 
-    // 拆分斜杠词条
-    const subKeys = (key.includes('/') && !key.includes('://'))
-      ? key.split('/').map(k => k.trim()).filter(Boolean)
-      : [key];
+    const subKeys = [key];
 
     for (const subK of subKeys) {
       let finalKey = subK;
@@ -676,15 +666,6 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       if (section.type === 'FORBIDDEN_TERMS') {
         fileReport.stats.forbiddenTerms++;
-        const hasSepOrTrans = cleanLine.includes(':') || cleanLine.includes('：') || cleanLine.includes('=') || cleanLine.includes('＝') ||
-          cleanLine.includes(',') || cleanLine.includes('，') ||
-          /^[A-Za-z0-9\s.'"-]+\s+[\u4e00-\u9fa5\u3040-\u30ff]/.test(cleanLine);
-        if (hasSepOrTrans) {
-          addIssue(fileReport.warningGroups, fileReport.warnings, 'forbidden_term_sep', '禁翻词条包含了连接符、关联符或多余分隔符。建议每行独立编写一条。', rawLine.trim());
-        }
-        if (cleanLine.includes('/') && !cleanLine.includes('://')) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'forbidden_slash_in_key', '禁翻词条中包含斜杠 `/`', rawLine.trim());
-        }
         continue;
       }
 
@@ -722,20 +703,15 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
       const parsed = wholeQuoted ? { key: wholeQuoted.key, value: wholeQuoted.value, separator: ':' } : parseGlossaryKeyValuePair(cleanLine);
       if (!parsed) {
         if (cleanLine.includes("'") || cleanLine.includes('‘') || cleanLine.includes('"') || cleanLine.includes('“')) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含撇号/引号但未用引号包裹', rawLine.trim());
+          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含撇号或引号但未用引号包裹', rawLine.trim());
         } else {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'missing_separator', '规则缺失连接符 `:` 或关联符 `=`', rawLine.trim());
+          addIssue(fileReport.errorGroups, fileReport.errors, 'missing_separator', '翻译词条区规则缺失连接符 `:` 或关联符 `=`', rawLine.trim());
         }
         continue;
       }
 
       const key = parsed.key.trim();
       const val = parsed.value.trim().replace(/[,，]$/, '');
-
-      // 检查原文中是否使用了斜杠 / 表示并列
-      if (key.includes('/') && !key.includes('://')) {
-        addIssue(fileReport.errorGroups, fileReport.errors, 'slash_in_key', '规则原文包含斜杠 `/`', rawLine.trim());
-      }
 
       // 检查原文是否包含连接符/关联符或撇号/引号（必须加引号，支持各类成对引号）
       const unquotedKey = smartUnquote(key);
@@ -746,7 +722,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
 
       if (!isQuoted) {
         if (hasQuoteOrApostrophe) {
-          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含撇号/引号但未用引号包裹', rawLine.trim());
+          addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_apostrophe', '规则原文包含撇号或引号但未用引号包裹', rawLine.trim());
         } else if (hasConnectorOrAssoc || (hasTopLevelResidualSeparator(val) && !/^https?:\/\//.test(val))) {
           addIssue(fileReport.errorGroups, fileReport.errors, 'unquoted_dangerous_punc', '规则原文包含连接符 `:` 或关联符 `=` 但未用引号包裹', rawLine.trim());
         } else if (isSingleWordDot) {
@@ -763,7 +739,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
         } else if (keyParts.length > 1 && keyParts.length !== valParts.length) {
           addIssue(fileReport.warningGroups, fileReport.warnings, 'unequal_equal_parts', '`=` 语法规则原文部分数与译文部分数不一致。建议检查。', rawLine.trim());
         } else if (isQuoted && !hasConnectorOrAssoc && !hasQuoteOrApostrophe && !isSingleWordDot) {
-          addIssue(fileReport.warningGroups, fileReport.warnings, 'unnecessary_equals_quotes', '`=` 关联语法规则包裹了外层引号，会导致词条无法拆分匹配名/姓。建议去除外层引号。', rawLine.trim());
+          addIssue(fileReport.warningGroups, fileReport.warnings, 'unnecessary_equals_quotes', '`=` 关联语法规则包裹了外层引号，会导致词条无法拆分匹配。建议去除外层引号。', rawLine.trim());
         }
       } else {
         // 使用冒号但原文多词且译文多词（可能为姓名或其它复合专有名词）
@@ -772,7 +748,7 @@ export function lintGlossaryFile(filePath, baseBranchContent = null) {
           const parts = smartSplit(unquotedKey, TERM_SEPARATOR_RE);
           const valParts = smartSplit(smartUnquote(cleanVal), TRANSLATION_SEPARATOR_RE);
           if (parts.length > 1 && valParts.length > 1) {
-            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '复合专有名词使用了 `:` 语法。若为角色姓名，建议改用 `=` 语法以支持单名/姓氏拆分自动匹配。', rawLine.trim());
+            addIssue(fileReport.warningGroups, fileReport.warnings, 'person_colon', '复合专有名词使用了 `:` 语法。建议改用 `=` 语法以支持拆分自动匹配。', rawLine.trim());
           }
         }
       }
@@ -906,31 +882,29 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
   let totalWarnings = 0;
 
   const ORDERED_WARNING_KEYS = [
+    'metadata_format',
+    'date_format',
     'single_word_equals',
     'unequal_equal_parts',
     'unnecessary_equals_quotes',
-    'date_format',
     'person_colon',
     'trailing_abbrev_dot',
     'trailing_comma',
     'inline_comment',
-    'forbidden_term_sep',
-    'metadata_format',
     'conflicting_translation',
     'duplicate_term'
   ];
 
   const WARNING_FIX_DESCRIPTIONS = {
+    metadata_format: '规范元数据属性书写格式；',
+    date_format: '标准化更新时间为 ISO 8601 (`YYYY-MM-DD`) 格式；',
     single_word_equals: '将单个单词的 `=` 语法规则规范化为 `:`；',
     unequal_equal_parts: '将分段数不对等的 `=` 语法规则修改为 `:`；',
-    unnecessary_equals_quotes: '移除 `=` 语法规则的多余外层引号，释放名/姓自动拆分匹配；',
-    date_format: '标准化更新时间为 ISO 8601 (`YYYY-MM-DD`) 格式；',
-    person_colon: '将符合复合专有名词结构的规则升级为 `=` 语法，使单独名、姓也能自动翻译；',
+    unnecessary_equals_quotes: '移除 `=` 语法规则的多余外层引号，释放自动拆分匹配；',
+    person_colon: '将符合复合专有名词结构的规则升级为 `=` 语法，支持拆分自动匹配；',
     trailing_abbrev_dot: '为单个单词末尾缩写点包裹引号以确保严格词边界匹配；',
     trailing_comma: '清除规则末尾残留的逗号；',
     inline_comment: '将行尾 `//` 注释自动提取为独立行注释，避免注释混入正文替换；',
-    forbidden_term_sep: '拆分禁翻词条中的并列词，每行独立一条；',
-    metadata_format: '规范元数据属性书写格式；',
     conflicting_translation: '解决同一原文的译文冲突（默认保留最后出现的规则）；',
     duplicate_term: '移除完全相同的冗余规则（默认保留首次出现的规则）；'
   };
@@ -945,8 +919,6 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
     'unquoted_apostrophe',
     'unquoted_dangerous_punc',
     'missing_separator',
-    'slash_in_key',
-    'forbidden_slash_in_key',
     'regex_syntax',
     'regex_empty_match',
     'regex_redos',
@@ -1057,7 +1029,7 @@ export function formatMarkdownReport(reports, autoFixedList = [], isHeadBranchMa
         // 双版本：1. 基础修复版  2. 体验最佳版
         md += isSingle ? `#### 1. 基础修复版\n\n` : `##### 1. 基础修复版\n\n`;
         md += `> [!TIP]\n`;
-        md += `> 该版本仅修复阻断性错误：补齐缺失的连接符或关联符、拆分斜杠同义词、为危险标点补齐引号等，保留维护者原有的连接符与关联符书写习惯、注释与格式。\n\n`;
+        md += `> 该版本仅修复阻断性错误：补齐缺失的连接符或关联符、为危险标点补齐引号等，保留维护者原有的连接符与关联符书写习惯、注释与格式。\n\n`;
         md += '```text\n';
         md += fixedMinimal.trim() + '\n';
         md += '```\n\n';

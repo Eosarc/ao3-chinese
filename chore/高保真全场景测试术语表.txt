@@ -1,76 +1,38 @@
-// 维护者：Aria, 10xcaffeine
-// 版本号：1.0.0
-// 更新时间：2026.11.14,
+维护者：Aria, 10xcaffeine
+版本号：1.0.0
+更新时间：2026.11.14
 
 terms
-// 1. 阻断性错误：整行包裹引号
+// 经典车手与赛道规则
 "Ferrari = 法拉利"
-
-// 2. 阻断性错误：原文包含撇号未用引号包裹
 O'Connor : 奥康纳
-
-// 3. 阻断性错误：原文包含连接符未用引号包裹
 McLaren: Mercedes : 迈凯伦奔驰
-
-// 4. 阻断性错误：缺少连接符（逗号误作连接符）
 Williams, 威廉姆斯
-
-// 5. 阻断性错误：原文包含斜杠表示并列
-Red Bull / Toro Rosso : 红牛
-
-// 6. 建议：单词使用等号语法
 Pirelli = 倍耐力
-
-// 7. 建议：等号两边分词不对等
 Aston Martin = 阿斯顿马丁
-
-// 8. 建议：等号规则多余外层引号
 "Toto Wolff" = 托托·沃尔夫
-
-// 9. 建议：复合专有名词使用冒号（可升级等号）
 Lewis Hamilton : 刘易斯·汉密尔顿
-
-// 10. 建议：单个单词末尾缩写点未加引号
 St. : 圣
-
-// 11. 建议：行尾多余逗号
 Monza : 蒙扎,
-
-// 12. 建议：行尾内联注释
 Silverstone : 银石 // 英国著名赛车场
-
-// 13. 建议：同一词条译文冲突
 Monaco : 摩纳哥
 Monaco : 莫纳哥
-
-// 14. 建议：完全重复规则
 Spa-Francorchamps = 斯帕·弗朗科尔尚
 Spa-Francorchamps = 斯帕·弗朗科尔尚
-
-// 15. 合规豁免：原文包含合法逗号，冒号正常连接
 Verstappen, Max : 维斯塔潘
-
-// 16. 合规豁免：正确包裹引号的缩写点
 "Dr." : 博士
-
-// 17. 合规豁免：标准等号规则
 Charles Leclerc = 查尔斯·勒克莱尔
+Red Bull / Toro Rosso : 红牛
 
 general terms
-// 通用词条示例
 Engine : 引擎
 Pit Stop : 进站维修
 
 forbidden terms
-// 禁翻词条并列（由逗号分隔，应拆分为两行）
 Ferrari, 法拉利
-// 禁翻词条并列（由斜杠分隔，应拆分为两行）
 Red Bull / AlphaTauri
-// 合规禁翻词条
 Mercedes
 
 regex
-// 正则末尾多余逗号
-/(?<=\b)GP\b/ : 大奖赛,
-// 合规正则表达式
 /^(?<=\b)F1(?=\b)$/ : 一级方程式
+/(?<=\b)GP\b/ : 大奖赛,
