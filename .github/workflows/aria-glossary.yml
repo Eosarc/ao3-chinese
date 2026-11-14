@@ -100,10 +100,11 @@ jobs:
             const files = JSON.parse(process.env.FILES_JSON || "[]");
             let fixed = [];
             for (const f of files) {
-              if (f.startsWith(".") || f.endsWith(".json") || f.endsWith(".txt")) continue;
-              if (fs.existsSync(f) && fs.statSync(f).isFile()) {
-                fs.renameSync(f, f + ".txt");
-                fixed.push(f);
+              if (f.startsWith(".") || f.endsWith(".json")) continue;
+              const actual = fs.existsSync(f) ? f : (f.endsWith(".txt") && fs.existsSync(f.slice(0, -4)) ? f.slice(0, -4) : null);
+              if (actual && !actual.endsWith(".txt") && fs.statSync(actual).isFile()) {
+                fs.renameSync(actual, actual + ".txt");
+                fixed.push(actual);
               }
             }
             if (fixed.length > 0) {
@@ -160,8 +161,14 @@ jobs:
             for (const f of files) {
               if (fs.existsSync(f)) targets.push(f);
               else if (fs.existsSync(f + ".txt")) targets.push(f + ".txt");
+              else if (f.endsWith(".txt") && fs.existsSync(f.slice(0, -4))) targets.push(f.slice(0, -4));
             }
             console.log("质检目标文件:", targets);
+            if (targets.length === 0) {
+              console.log("没有找到具体的术语表变动文件，跳过质检");
+              fs.writeFileSync("linter_report.md", "");
+              process.exit(0);
+            }
             const args = ["/tmp/aria-engine/glossary-linter.mjs", "--head-branch", "${{ github.event.pull_request.head.ref }}", ...targets];
             const proc = spawnSync("node", args, { encoding: "utf-8" });
             fs.writeFileSync("linter_report.md", proc.stdout || "");
