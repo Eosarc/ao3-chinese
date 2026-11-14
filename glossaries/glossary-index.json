@@ -569,5 +569,16 @@
     "maintainer": "Aria, 10xcaffeine",
     "visibility": true,
     "feedback": "https://github.com/Oarcr"
+  },
+  {
+    "name": "Initial D",
+    "tags": [
+      "头文字D",
+      "头文字 D"
+    ],
+    "url": "https://raw.githubusercontent.com/Oarcr/ao3-chinese/main/glossaries/Initial%20D.txt",
+    "maintainer": "Aria",
+    "visibility": true,
+    "feedback": "https://github.com/Oarcr"
   }
 ]
