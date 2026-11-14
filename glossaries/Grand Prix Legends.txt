@@ -1,0 +1,38 @@
+维护者：Aria, 10xcaffeine
+版本号：1.0.0
+更新时间：2026.11.14
+
+terms
+// 经典车手与赛道规则
+"Ferrari = 法拉利"
+O'Connor : 奥康纳
+McLaren: Mercedes : 迈凯伦奔驰
+Williams, 威廉姆斯
+Pirelli = 倍耐力
+Aston Martin = 阿斯顿马丁
+"Toto Wolff" = 托托·沃尔夫
+Lewis Hamilton : 刘易斯·汉密尔顿
+St. : 圣
+Monza : 蒙扎,
+Silverstone : 银石 // 英国著名赛车场
+Monaco : 摩纳哥
+Monaco : 莫纳哥
+Spa-Francorchamps = 斯帕·弗朗科尔尚
+Spa-Francorchamps = 斯帕·弗朗科尔尚
+Verstappen, Max : 维斯塔潘
+"Dr." : 博士
+Charles Leclerc = 查尔斯·勒克莱尔
+Red Bull / Toro Rosso : 红牛
+
+general terms
+Engine : 引擎
+Pit Stop : 进站维修
+
+forbidden terms
+Ferrari, 法拉利
+Red Bull / AlphaTauri
+Mercedes
+
+regex
+/^(?<=\b)F1(?=\b)$/ : 一级方程式
+/(?<=\b)GP\b/ : 大奖赛,
