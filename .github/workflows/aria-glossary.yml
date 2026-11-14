@@ -441,6 +441,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref || 'main' }}
           path: main_repo
+          fetch-depth: 2
 
       - name: 检出 Wiki 仓库
         if: env.HAS_WIKI_PAT == 'true'
@@ -505,11 +506,11 @@ jobs:
               const lines = body.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
-                if (line.includes("**") && line.includes(keyword) && (line.includes("：") || line.includes(":"))) {
+                if (line.includes(keyword) && (line.includes("：") || line.includes(":"))) {
                   const sepIdx = line.indexOf("：") !== -1 ? line.indexOf("：") : line.indexOf(":");
                   let after = line.substring(sepIdx + 1).trim();
                   if (after) {
-                    let val = after.replace(/^[`{<"“]+|[`}>"”]+$/g, "").trim();
+                    let val = after.replace(/^[`*_{<"“]+|[`*_{}>"”]+$/g, "").trim();
                     if (!/^(例如|eg|e\.g\.)[:：]?/i.test(val) && !val.includes("梦想协奏曲") && !val.includes("BanG Dream")) {
                       return val;
                     }
@@ -518,7 +519,7 @@ jobs:
                     const nextLine = lines[j].trim();
                     if (!nextLine) continue;
                     if (nextLine.startsWith("-") || nextLine.startsWith("*") || nextLine.startsWith("#")) break;
-                    let val = nextLine.replace(/^[`{<"“]+|[`}>"”]+$/g, "").trim();
+                    let val = nextLine.replace(/^[`*_{<"“]+|[`*_{}>"”]+$/g, "").trim();
                     if (!/^(例如|eg|e\.g\.)[:：]?/i.test(val) && !val.includes("梦想协奏曲") && !val.includes("BanG Dream")) {
                       return val;
                     }
@@ -552,7 +553,7 @@ jobs:
             }
 
             const rawSection = extractPrField(prBody, "Raw 链接");
-            const rawUrlMatch = rawSection ? rawSection.match(/https?:\/\/[^\s`<>""')\]}]+/) : null;
+            const rawUrlMatch = rawSection ? rawSection.match(/https?:\/\/[^\s`<>""\x27)\]}]+/) : null;
 
             const addedNames = [];
 
