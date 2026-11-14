@@ -558,5 +558,16 @@
     "maintainer": "CoffeHolic-330",
     "visibility": true,
     "feedback": "https://github.com/CoffeHolic-330"
+  },
+  {
+    "name": "Grand Prix Legends",
+    "tags": [
+      "GPL",
+      "大奖赛传奇"
+    ],
+    "url": "https://raw.githubusercontent.com/Oarcr/ao3-chinese/main/glossaries/Grand%20Prix%20Legends.txt",
+    "maintainer": "Aria, 10xcaffeine",
+    "visibility": true,
+    "feedback": "https://github.com/Oarcr"
   }
 ]
