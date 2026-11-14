@@ -618,5 +618,6 @@ jobs:
             fi
             git commit -m "$COMMIT_MSG"
             git push origin master || git push origin main
-            echo "Wiki 更新推送成功，将自动触发 sync_wiki_to_json 工作流。"
+            echo "Wiki 更新推送成功，正在触发 sync_wiki_to_json 工作流..."
+            gh workflow run sync_wiki_to_json.yml --repo ${{ github.repository }} || true
           fi

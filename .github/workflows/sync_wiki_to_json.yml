@@ -1,7 +1,8 @@
 name: Sync Wiki to Glossary JSON
 
 on:
-  gollum
+  gollum:
+  workflow_dispatch:
 
 jobs:
   build:
