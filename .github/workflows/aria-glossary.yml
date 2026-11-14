@@ -123,28 +123,24 @@ jobs:
         if: steps.get_changed.outputs.files_json != '[]'
         run: |
           mkdir -p /tmp/aria-engine
-          LINTER_FETCHED=false
-          UPSTREAM_CANDIDATES=("V-Lipset/ao3-chinese" "Oarcr/ao3-chinese")
-          for repo in "${UPSTREAM_CANDIDATES[@]}"; do
-            echo "尝试从 $repo 获取最新 glossary-linter.mjs..."
-            if curl -sSfL "https://raw.githubusercontent.com/$repo/main/tools/glossary-linter.mjs" -o /tmp/aria-engine/glossary-linter.mjs; then
-              if [ -s /tmp/aria-engine/glossary-linter.mjs ]; then
-                echo "✅ 成功从 $repo 获取最新质检引擎！"
-                LINTER_FETCHED=true
-                break
+          if [ -f base_repo/tools/glossary-linter.mjs ]; then
+            echo "✅ 优先使用当前基准分支的 base_repo/tools/glossary-linter.mjs 作为质检引擎！"
+            cp base_repo/tools/glossary-linter.mjs /tmp/aria-engine/glossary-linter.mjs
+          else
+            UPSTREAM_CANDIDATES=("Oarcr/ao3-chinese" "V-Lipset/ao3-chinese")
+            for repo in "${UPSTREAM_CANDIDATES[@]}"; do
+              echo "尝试从 $repo 获取最新 glossary-linter.mjs..."
+              if curl -sSfL "https://raw.githubusercontent.com/$repo/main/tools/glossary-linter.mjs" -o /tmp/aria-engine/glossary-linter.mjs; then
+                if [ -s /tmp/aria-engine/glossary-linter.mjs ]; then
+                  echo "✅ 成功从 $repo 获取最新质检引擎！"
+                  break
+                fi
               fi
-            fi
-          done
-
-          if [ "$LINTER_FETCHED" != "true" ]; then
-            echo "⚠️ 动态拉取失败，尝试使用 base_repo 内置的 tools/glossary-linter.mjs 兜底..."
-            if [ -f base_repo/tools/glossary-linter.mjs ]; then
-              cp base_repo/tools/glossary-linter.mjs /tmp/aria-engine/glossary-linter.mjs
-              echo "✅ 已使用 base_repo/tools/glossary-linter.mjs"
-            else
-              echo "❌ 未找到可用质检引擎！"
-              exit 1
-            fi
+            done
+          fi
+          if [ ! -s /tmp/aria-engine/glossary-linter.mjs ]; then
+            echo "❌ 未找到可用质检引擎！"
+            exit 1
           fi
 
       - name: 运行术语表质检脚本
@@ -248,28 +244,24 @@ jobs:
         id: fetch_engine
         run: |
           mkdir -p /tmp/aria-engine
-          LINTER_FETCHED=false
-          UPSTREAM_CANDIDATES=("V-Lipset/ao3-chinese" "Oarcr/ao3-chinese")
-          for repo in "${UPSTREAM_CANDIDATES[@]}"; do
-            echo "尝试从 $repo 获取最新 glossary-linter.mjs..."
-            if curl -sSfL "https://raw.githubusercontent.com/$repo/main/tools/glossary-linter.mjs" -o /tmp/aria-engine/glossary-linter.mjs; then
-              if [ -s /tmp/aria-engine/glossary-linter.mjs ]; then
-                echo "✅ 成功从 $repo 获取最新质检引擎！"
-                LINTER_FETCHED=true
-                break
+          if [ -f tools/glossary-linter.mjs ]; then
+            echo "✅ 优先使用本地 tools/glossary-linter.mjs 作为质检引擎！"
+            cp tools/glossary-linter.mjs /tmp/aria-engine/glossary-linter.mjs
+          else
+            UPSTREAM_CANDIDATES=("Oarcr/ao3-chinese" "V-Lipset/ao3-chinese")
+            for repo in "${UPSTREAM_CANDIDATES[@]}"; do
+              echo "尝试从 $repo 获取最新 glossary-linter.mjs..."
+              if curl -sSfL "https://raw.githubusercontent.com/$repo/main/tools/glossary-linter.mjs" -o /tmp/aria-engine/glossary-linter.mjs; then
+                if [ -s /tmp/aria-engine/glossary-linter.mjs ]; then
+                  echo "✅ 成功从 $repo 获取最新质检引擎！"
+                  break
+                fi
               fi
-            fi
-          done
-
-          if [ "$LINTER_FETCHED" != "true" ]; then
-            echo "⚠️ 动态拉取失败，尝试使用本地内置的 tools/glossary-linter.mjs 兜底..."
-            if [ -f tools/glossary-linter.mjs ]; then
-              cp tools/glossary-linter.mjs /tmp/aria-engine/glossary-linter.mjs
-              echo "✅ 已使用本地 tools/glossary-linter.mjs"
-            else
-              echo "❌ 未找到可用质检引擎！"
-              exit 1
-            fi
+            done
+          fi
+          if [ ! -s /tmp/aria-engine/glossary-linter.mjs ]; then
+            echo "❌ 未找到可用质检引擎！"
+            exit 1
           fi
 
       - name: 获取变动的术语表文件
