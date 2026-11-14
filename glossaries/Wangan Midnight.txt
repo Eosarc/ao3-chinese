@@ -1,10 +1,10 @@
-// 维护者：Aria
-// 版本号：1.0.0
-// 更新时间：2026-11-14
+维护者：Aria
+版本号：1.0.0
+更新时间：2026-11-14
 
 terms
 Devil Z : 恶魔之Z
-Akio Asakura = 朝仓晶夫
+Akio Asakura = 朝仓·晶夫
 "Dr." : 医生
 Verstappen, Max : 维斯塔潘
 
